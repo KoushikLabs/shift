@@ -22,7 +22,7 @@ import {
   stanceLabel,
 } from "../domain.js";
 import { buildExampleProject } from "../example.js";
-import * as dbapi from "../db.js";
+import { backend } from "../backends/index.js";
 import { renderMatrix } from "./matrix.js";
 import { renderTiles, renderTable } from "./mapview.js";
 import { renderEditor } from "./editor.js";
@@ -38,6 +38,16 @@ import { downloadBlob, downloadText, copyText, readFile, slug, stamp } from "../
 import { svgToPngBlob, themeColours } from "../io/png.js";
 import { esc, plural } from "./dom.js";
 import { canInstall, isInstalled, promptInstall } from "../pwa.js";
+import * as auth from "../auth.js";
+import { CLOUD, LOCAL } from "../backends/index.js";
+import {
+  createOrganisationDialog,
+  handleInviteLink,
+  membersDialog,
+  noOrganisationScreen,
+  offerMigration,
+  signInDialog,
+} from "./account.js";
 
 let root = null;
 let shellKey = "";
@@ -65,15 +75,38 @@ export function mount(el) {
 
 function render() {
   if (!root) return;
-  const key = state.fatal ? "fatal" : !state.ready ? "loading" : state.project ? "project:" + state.project.id : "list";
+  // Signed in but belonging to no organisation is its own screen: dropping such
+  // a user into local mode would silently store their work somewhere other than
+  // where they just asked for it to go.
+  const needsOrg = auth.signedIn() && !auth.session.orgId;
+  const key = state.fatal
+    ? "fatal"
+    : !state.ready
+      ? "loading"
+      : needsOrg
+        ? "noorg"
+        : state.project
+          ? "project:" + state.project.id
+          : "list";
   if (key !== shellKey) {
     shellKey = key;
     lastEditorKey = "";
-    root.innerHTML = key === "fatal" ? fatalShell() : key === "loading" ? loadingShell() : key === "list" ? listShell() : projectShell();
+    root.innerHTML =
+      key === "fatal"
+        ? fatalShell()
+        : key === "loading"
+          ? loadingShell()
+          : key === "noorg"
+            ? orgShell()
+            : key === "list"
+              ? listShell()
+              : projectShell();
     wireShell();
   }
   if (key === "list") renderList();
+  else if (key === "noorg") renderNoOrg();
   else if (key.startsWith("project:")) renderProject();
+  renderAccountBar();
   paintBanner();
 }
 
@@ -99,6 +132,38 @@ function fatalShell() {
     </ul>`;
 }
 
+function orgShell() {
+  return `
+  <header class="app">
+    <div class="topline">
+      <div>
+        <p class="eyebrow">Stakeholder analysis · scores, strategy and movement</p>
+        <h1>${APP_NAME}</h1>
+      </div>
+      <div class="headtools">
+        <span id="accountSlot"></span>
+        <div class="themetoggle" id="themeToggle"></div>
+      </div>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+  </header>
+  <div id="orgBody"></div>`;
+}
+
+function renderNoOrg() {
+  const host = root.querySelector("#orgBody");
+  host.innerHTML = noOrganisationScreen();
+  host.querySelector("#createOrg").addEventListener("click", async () => {
+    const res = await createOrganisationDialog();
+    if (!res.ok && res.message) return store.notify(res.message, "error");
+    if (res.ok) {
+      await store.reconcileMode();
+      await maybeMigrate();
+    }
+  });
+  host.querySelector("#signOutEmpty").addEventListener("click", doSignOut);
+}
+
 function listShell() {
   return `
   <header class="app">
@@ -108,6 +173,7 @@ function listShell() {
         <h1>${APP_NAME} <span class="mark">— who moved, and what you were doing</span></h1>
       </div>
       <div class="headtools">
+        <span id="accountSlot"></span>
         <span id="installSlot"></span>
         <div class="themetoggle" id="themeToggle"></div>
       </div>
@@ -130,6 +196,7 @@ function projectShell() {
         <p class="sub" id="projSub"></p>
       </div>
       <div class="headtools">
+        <span id="accountSlot"></span>
         <span id="installSlot"></span>
         <div class="themetoggle" id="themeToggle"></div>
       </div>
@@ -178,8 +245,7 @@ function projectShell() {
     <p><strong>Movement is not attribution.</strong> The effect view shows whether a stakeholder moved <em>while</em>
       an approach was in force. It does not establish that the approach caused it. Treat it as the evidence that
       prompts the question, not the answer.</p>
-    <p><strong>Everything is stored in this browser only.</strong> No account, no server, nothing uploaded.
-      That also means clearing site data destroys it. Export from the <em>Data</em> tab regularly.</p>
+    <p id="storageFootnote"></p>
   </footer>`;
 }
 
@@ -223,6 +289,99 @@ export function refreshInstallButton() {
   });
 }
 
+/**
+ * The account bar, and the mode indicator beside it.
+ *
+ * The chip is not decoration. Someone typing an adverse assessment of a named
+ * regulator must be able to tell at a glance whether it is going into their
+ * organisation's shared database or staying in this browser.
+ */
+function renderAccountBar() {
+  const slot = root.querySelector("#accountSlot");
+  if (!slot) return;
+
+  if (!state.cloudAvailable) {
+    slot.innerHTML = `<span class="chip" title="This build has no hosted backend configured, so everything stays in this browser.">This browser only</span>`;
+    return;
+  }
+
+  if (!auth.signedIn()) {
+    slot.innerHTML =
+      `<span class="chip warn" title="Not signed in — maps are stored in this browser and nobody else can see them.">This browser only</span>` +
+      `<button class="small" id="signInBtn">Sign in</button>`;
+    slot.querySelector("#signInBtn").addEventListener("click", doSignIn);
+    return;
+  }
+
+  const orgs = auth.session.orgs;
+  const active = auth.activeOrg();
+  const picker =
+    orgs.length > 1
+      ? `<select id="orgPick" style="width:auto" title="Switch organisation">${orgs
+          .map((o) => `<option value="${esc(o.id)}" ${o.id === auth.session.orgId ? "selected" : ""}>${esc(o.name)}</option>`)
+          .join("")}</select>`
+      : `<span class="chip" style="color:var(--ally);border-color:var(--ally)" title="Maps are stored in this organisation and visible to its members.">${esc(active ? active.name : "")}</span>`;
+
+  slot.innerHTML = `${picker}
+    <button class="small" id="teamBtn" title="Members and invites">Team</button>
+    <button class="ghost small" id="signOutBtn" title="${esc(auth.session.user.email)}">Sign out</button>`;
+
+  const pick = slot.querySelector("#orgPick");
+  if (pick)
+    pick.addEventListener("change", async () => {
+      if (!(await confirmDiscard())) {
+        pick.value = auth.session.orgId;
+        return;
+      }
+      auth.setActiveOrg(pick.value);
+      await store.reconcileMode();
+    });
+  slot.querySelector("#teamBtn").addEventListener("click", async () => {
+    const o = auth.activeOrg();
+    if (!o) return;
+    await membersDialog(o.id, o.name);
+    await store.reconcileMode();
+  });
+  slot.querySelector("#signOutBtn").addEventListener("click", doSignOut);
+}
+
+async function doSignIn() {
+  if (!(await confirmDiscard())) return;
+  const ok = await signInDialog("signin");
+  if (!ok) return;
+  await store.reconcileMode();
+  if (auth.signedIn() && !auth.session.orgId) return; // the no-org screen takes over
+  await maybeMigrate();
+}
+
+async function doSignOut() {
+  if (!(await confirmDiscard())) return;
+  const ok = await confirmDialog({
+    title: "Sign out?",
+    body: `<p class="note">Your organisation's maps stay on the server. Any maps stored only in this
+      browser remain here and will be available again next time.</p>`,
+    confirmLabel: "Sign out",
+  });
+  if (!ok) return;
+  await auth.signOut();
+  await store.reconcileMode();
+  store.notify("Signed out. You are back to maps stored in this browser only.", "info");
+}
+
+/** Offer to copy browser-held maps into the organisation, once per session. */
+let migrationOffered = false;
+async function maybeMigrate() {
+  if (migrationOffered) return;
+  const org = auth.activeOrg();
+  if (!org) return;
+  migrationOffered = true;
+  const res = await offerMigration(org.name, (payload) => backend().importProject(payload));
+  if (res.moved > 0) {
+    await store.reconcileMode();
+    store.notify(`Copied ${plural(res.moved, "map")} into ${org.name}. The browser copies are still here too.`, "good");
+  }
+}
+
 function renderThemeToggle() {
   const host = root.querySelector("#themeToggle");
   if (!host) return;
@@ -243,12 +402,16 @@ function renderThemeToggle() {
 
 function renderList() {
   renderThemeToggle();
-  renderProjects(root.querySelector("#listBody"), state.projects, {
-    onNew: newProjectDialog,
-    onOpen: (id) => store.openProject(id),
-    onExample: loadExample,
-    onImport: importJson,
-  });
+  renderProjects(
+    root.querySelector("#listBody"),
+    state.projects,
+    { onNew: newProjectDialog, onOpen: (id) => store.openProject(id), onExample: loadExample, onImport: importJson },
+    {
+      mode: state.mode,
+      orgName: auth.activeOrg() ? auth.activeOrg().name : null,
+      cloudAvailable: state.cloudAvailable,
+    }
+  );
 }
 
 /* ----------------------------------------------------------------- project */
@@ -269,6 +432,18 @@ function renderProject() {
 
   renderTiles(root.querySelector("#tiles"), list, (view) => store.setView(view));
   renderViewNav();
+
+  const foot = root.querySelector("#storageFootnote");
+  if (foot) {
+    const org = auth.activeOrg();
+    foot.innerHTML =
+      state.mode === CLOUD
+        ? `<strong>Stored in ${esc(org ? org.name : "your organisation")}.</strong> Visible to everyone in that
+           organisation and to nobody else. Recorded history is append-only in the database — it cannot be
+           edited or deleted, by anyone.`
+        : `<strong>Stored in this browser only.</strong> No account, no server, nothing uploaded. That also
+           means clearing site data destroys it. Export from the <em>Data</em> tab regularly.`;
+  }
 
   const show = (id, on) => {
     const el = root.querySelector(id);
@@ -308,6 +483,8 @@ function renderProject() {
       project: p,
       stakeholders: list,
       changeCount: store.allChanges().length,
+      mode: state.mode,
+      orgName: auth.activeOrg() ? auth.activeOrg().name : null,
       onExportJson: exportJson,
       onCopyJson: copyJson,
       onExportCsv: exportCsv,
@@ -658,7 +835,7 @@ async function importJson() {
   }
 
   try {
-    await dbapi.importProject(payload);
+    await backend().importProject(payload);
   } catch (e) {
     store.notify(e.message || "The import failed and nothing was saved.", "error");
     return;
@@ -698,7 +875,7 @@ function pickJsonText() {
 async function loadExample() {
   const payload = buildExampleProject();
   try {
-    await dbapi.importProject(payload);
+    await backend().importProject(payload);
   } catch (e) {
     store.notify(e.message || "Could not create the example map.", "error");
     return;

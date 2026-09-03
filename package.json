@@ -1,7 +1,7 @@
 {
   "name": "shift-stakeholder-tracker",
   "version": "0.1.0",
-  "description": "Shift \u2014 a stakeholder tracker that versions the score, the reasoning and the engagement strategy together, so you can see which approach moved whom and when.",
+  "description": "Shift — a stakeholder tracker that versions the score, the reasoning and the engagement strategy together, so you can see which approach moved whom and when.",
   "license": "MIT",
   "private": false,
   "type": "module",
@@ -31,5 +31,8 @@
     "power-interest",
     "local-first",
     "pwa"
-  ]
+  ],
+  "dependencies": {
+    "@supabase/supabase-js": "^2.114.0"
+  }
 }

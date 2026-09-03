@@ -6,7 +6,9 @@
  * returns `{ok:true}` or `{ok:false, message}` and never throws at the caller.
  */
 
-import * as db from "./db.js";
+import { backend, backendMode, setBackendMode, LOCAL, CLOUD } from "./backends/index.js";
+import { initAuth, onAuthChange, session as auth } from "./auth.js";
+import { cloudConfigured } from "./supabaseClient.js";
 import {
   changedFields,
   makeProject,
@@ -45,6 +47,11 @@ export const state = {
   /** table filter */
   movementOnly: false,
   theme: "system",
+  /** "local" (this browser only) or "cloud" (signed in, per organisation). */
+  mode: LOCAL,
+  /** true once the auth layer has settled, so the UI does not flash a signed-out state. */
+  authReady: false,
+  cloudAvailable: false,
 };
 
 export function subscribe(fn) {
@@ -71,23 +78,67 @@ export function clearNotice() {
 /* --------------------------------------------------------------- lifecycle */
 
 export async function init() {
-  try {
-    await db.openDb();
-  } catch (e) {
-    state.fatal = e.message;
-    state.ready = true;
-    emit();
-    return;
-  }
-  // Best-effort: ask the browser not to evict us. Silent if unsupported.
-  db.requestPersistence();
+  state.cloudAvailable = cloudConfigured();
 
-  state.theme = (await db.getMeta("theme", "system")) || "system";
+  // Auth first: it decides which backend we are about to open.
+  await initAuth();
+  state.authReady = true;
+  onAuthChange(() => {
+    void reconcileMode();
+  });
+
+  state.theme = (await safeMeta("theme", "system")) || "system";
   applyTheme(state.theme);
 
-  state.projects = await db.listProjects();
-  const last = await db.getMeta("lastProjectId", null);
+  await reconcileMode({ initial: true });
+}
+
+/**
+ * Point the app at the right backend for the current auth state, and reload.
+ *
+ * Signed in with an organisation selected -> cloud. Anything else -> local.
+ * Called on startup and whenever sign-in, sign-out or an org switch happens.
+ */
+export async function reconcileMode({ initial = false } = {}) {
+  const wanted = auth.user && auth.orgId ? CLOUD : LOCAL;
+  const changed = wanted !== backendMode();
+  setBackendMode(wanted);
+  state.mode = wanted;
+
+  if (changed || initial) {
+    state.project = null;
+    state.stakeholders = [];
+    state.changes = new Map();
+    state.selectedId = null;
+    state.dirty = false;
+  }
+
+  if (wanted === LOCAL) {
+    try {
+      await backend().openDb();
+      state.fatal = null;
+    } catch (e) {
+      // Only fatal for local mode; cloud mode does not need IndexedDB at all.
+      state.fatal = e.message;
+      state.ready = true;
+      emit();
+      return;
+    }
+    backend().requestPersistence();
+  } else {
+    state.fatal = null;
+  }
+
+  try {
+    state.projects = await backend().listProjects();
+  } catch (e) {
+    state.projects = [];
+    notify(e.message || "Could not load your maps.", "error");
+  }
+
+  const last = await safeMeta("lastProjectId", null);
   state.ready = true;
+
   if (last && state.projects.some((p) => p.id === last)) {
     await openProject(last);
   } else {
@@ -95,10 +146,18 @@ export async function init() {
   }
 }
 
+async function safeMeta(key, fallback) {
+  try {
+    return await backend().getMeta(key, fallback);
+  } catch (e) {
+    return fallback;
+  }
+}
+
 export function setTheme(theme) {
   state.theme = theme;
   applyTheme(theme);
-  db.setMeta("theme", theme);
+  backend().setMeta("theme", theme);
   emit();
 }
 
@@ -113,20 +172,20 @@ function applyTheme(theme) {
 export async function createProject(fields) {
   const project = makeProject(fields);
   try {
-    await db.putProject(project);
+    await backend().putProject(project);
   } catch (e) {
     return fail(e);
   }
-  state.projects = await db.listProjects();
+  state.projects = await backend().listProjects();
   await openProject(project.id);
   return { ok: true, id: project.id };
 }
 
 export async function openProject(id) {
   try {
-    const loaded = await db.loadProject(id);
+    const loaded = await backend().loadProject(id);
     if (!loaded) {
-      state.projects = await db.listProjects();
+      state.projects = await backend().listProjects();
       notify("That map no longer exists.", "error");
       return { ok: false };
     }
@@ -138,7 +197,7 @@ export async function openProject(id) {
     state.view = "map";
     state.dirty = false;
     state.movementOnly = false;
-    db.setMeta("lastProjectId", id);
+    backend().setMeta("lastProjectId", id);
     emit();
     return { ok: true };
   } catch (e) {
@@ -152,8 +211,8 @@ export async function closeProject() {
   state.changes = new Map();
   state.selectedId = null;
   state.dirty = false;
-  state.projects = await db.listProjects();
-  db.setMeta("lastProjectId", null);
+  state.projects = await backend().listProjects();
+  backend().setMeta("lastProjectId", null);
   emit();
 }
 
@@ -161,19 +220,19 @@ export async function updateProject(fields) {
   if (!state.project) return { ok: false };
   const next = { ...state.project, ...fields, updatedAt: nowISO() };
   try {
-    await db.putProject(next);
+    await backend().putProject(next);
   } catch (e) {
     return fail(e);
   }
   state.project = next;
-  state.projects = await db.listProjects();
+  state.projects = await backend().listProjects();
   emit();
   return { ok: true };
 }
 
 export async function deleteProject(id) {
   try {
-    await db.deleteProject(id);
+    await backend().deleteProject(id);
   } catch (e) {
     return fail(e);
   }
@@ -182,9 +241,9 @@ export async function deleteProject(id) {
     state.stakeholders = [];
     state.changes = new Map();
     state.selectedId = null;
-    db.setMeta("lastProjectId", null);
+    backend().setMeta("lastProjectId", null);
   }
-  state.projects = await db.listProjects();
+  state.projects = await backend().listProjects();
   emit();
   return { ok: true };
 }
@@ -196,7 +255,7 @@ export async function addStakeholder(fields) {
   const s = makeStakeholder(state.project.id, fields);
   if (!s.name) return { ok: false, message: "A stakeholder needs a name." };
   try {
-    await db.putStakeholder(s, touchProject());
+    await backend().putStakeholder(s, touchProject());
   } catch (e) {
     return fail(e);
   }
@@ -215,7 +274,7 @@ export async function addStakeholdersBulk(list) {
   const made = list.map((f) => makeStakeholder(state.project.id, f)).filter((s) => s.name);
   if (!made.length) return { ok: false, message: "Nothing to import — no rows had a name." };
   try {
-    await db.addStakeholders(made, touchProject());
+    await backend().addStakeholders(made, touchProject());
   } catch (e) {
     return fail(e);
   }
@@ -238,7 +297,7 @@ export async function updateStakeholderIdentity(id, { name, type, isIndividual }
   };
   if (!next.name) return { ok: false, message: "A stakeholder needs a name." };
   try {
-    await db.putStakeholder(next, touchProject());
+    await backend().putStakeholder(next, touchProject());
   } catch (e) {
     return fail(e);
   }
@@ -250,7 +309,7 @@ export async function updateStakeholderIdentity(id, { name, type, isIndividual }
 
 export async function deleteStakeholder(id) {
   try {
-    await db.deleteStakeholder(id);
+    await backend().deleteStakeholder(id);
   } catch (e) {
     return fail(e);
   }
@@ -319,7 +378,7 @@ export async function commit(id, next, note = "") {
   const updated = { ...s, ...proposed, updatedAt: at };
 
   try {
-    await db.commitChange(updated, change, touchProject());
+    await backend().commitChange(updated, change, touchProject());
   } catch (e) {
     // Nothing was applied to memory, so there is nothing to undo — but say so loudly.
     return fail(e);
@@ -427,7 +486,7 @@ function fail(e) {
 
 /** Used by the JSON importer, which writes straight to the database. */
 export async function refreshAfterImport(projectId) {
-  state.projects = await db.listProjects();
+  state.projects = await backend().listProjects();
   if (projectId) await openProject(projectId);
   else emit();
 }

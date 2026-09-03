@@ -39,6 +39,12 @@ jobs:
         run: npm test
 
       - name: Build
+        # Both values are public by design: the anon key grants nothing on its
+        # own, because every table is governed by Row Level Security. Absent,
+        # the build still works and ships with only the no-account local mode.
+        env:
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Fail if the build reaches out to the network

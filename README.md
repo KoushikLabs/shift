@@ -20,21 +20,23 @@ It runs entirely in your browser. No account, no server, no data leaving the mac
 
 **→ [koushiklabs.github.io/shift](https://koushiklabs.github.io/shift/)**
 
-No account, no sign-up, no download. Open it and start a map.
+There are two ways to run it, and the app always shows which one you are in.
 
-**To install it as an app:** open that link in Chrome or Edge and click **Install app** in the top-right
-(or the install icon in the address bar). Safari 17+ on macOS: **File → Add to Dock**. You get an icon in
-your Start menu or Dock, its own window, and it keeps working with no internet connection.
+**Without an account.** Open the link and start a map. Everything stays in your browser, on your machine —
+no server, nothing uploaded, nobody else can see it. Good for trying it out, and genuinely usable
+indefinitely. The catch: clearing your browser data deletes it, colleagues cannot see it, and it is not on
+your other laptop. Use *Data → Download JSON* as your backup.
 
-**Where your data goes: nowhere.** Everything you type stays in your own browser's storage on your own
-machine. There is no server to send it to. Nobody — including whoever published this — can see your maps.
+**Signed in.** Your organisation gets its own private storage. Maps are shared with everyone you invite and
+with nobody else — enforced by the database, not just by the page — and they follow you to any device. This
+needs the hosted backend to be set up; see [docs/HOSTING.md](docs/HOSTING.md).
 
-Two consequences you need to know before you rely on it:
+If you start without an account and sign in later, Shift offers to copy your existing maps into your
+organisation, history and all. It copies rather than moves, so the browser originals stay put.
 
-- **Clearing your browser data deletes your maps.** So does using a different browser, a different
-  computer, or a private window. Use *Data → Download JSON* regularly. That file is the backup.
-- **Your colleagues cannot see your maps.** Sharing means sending them the JSON export, which they import
-  on their machine. Shared editing is deliberately not built (see [Status and scope](#status-and-scope)).
+**To install it as an app:** open the link in Chrome or Edge and click **Install app** in the top-right.
+Safari 17+ on macOS: **File → Add to Dock**. You get an icon in your Start menu or Dock, its own window, and
+offline use in local mode.
 
 ## The three stages
 
@@ -108,7 +110,7 @@ file.
 ```bash
 npm install
 npm run dev      # dev server with hot reload
-npm test         # 80 unit tests: domain, import/export, service worker
+npm test         # 96 unit tests: domain, import/export, row mapping, service worker
 npm run build    # -> dist/ : one HTML file plus icons, manifest, service worker
 ```
 
@@ -125,6 +127,12 @@ robocopy "D:\path\to\synced\project" "%LOCALAPPDATA%\shift-dev\app" /E /XD node_
 ```
 
 None of this affects *using* the tool. `dist/index.html` needs no toolchain at all.
+
+### Hosted mode
+
+See **[docs/HOSTING.md](docs/HOSTING.md)** for the full setup: creating the Supabase project, running the
+migration, configuring auth, and the keep-alive that stops a free project pausing after seven days. Without
+it the app runs perfectly well in local mode and says so.
 
 ### Deploying your own copy
 
@@ -167,27 +175,43 @@ and nobody loses their maps.
 This tool stores adverse judgements about named organisations and sometimes named individuals. That shapes
 the architecture, not just the policy.
 
-- **Private by architecture.** Everything is in your browser's own IndexedDB. There is no backend, no
-  account, no telemetry, and no analytics.
-- **Zero network requests.** The built page loads no fonts, scripts, styles or images from anywhere. It uses
-  system font stacks specifically so it never has to phone out. You can verify this: `grep -o 'https\?://'
-  dist/index.html` returns only XML namespace URIs.
-- **Named individuals are flagged.** Where a stakeholder looks like a person rather than an organisation, the
-  editor surfaces a note about data-protection obligations — under the UK/EU GDPR and comparable regimes a
-  written adverse assessment of an identifiable person is personal data, and they have a right of access to
-  it. The UI nudges toward mapping roles and institutions instead.
-- **Export is complete and easy.** Users who can leave will trust the tool.
+**Without an account**, the guarantee is absolute: everything is in your browser's own IndexedDB. No
+backend, no account, no telemetry, no analytics. The built page loads no fonts, scripts, styles or images
+from anywhere — CI fails the build if it does, so you can trust it rather than take my word:
+`grep -o 'https\?://' dist/index.html` returns only XML namespace URIs.
 
-The corollary, stated plainly in the app: clearing your browser data destroys your maps, and a colleague on
-another machine cannot see them. Export regularly.
+**Signed in**, your organisation's data is on the host's server. What protects it there:
+
+- **Row Level Security on every table.** One organisation cannot read another's rows — Postgres refuses,
+  regardless of what the client code does. A bug in this app, or a crafted API call, cannot cross that line.
+- **History is append-only in the database.** `changes` has no UPDATE or DELETE policy, so nobody — not
+  even an organisation's own admin — can rewrite or erase a recorded change. SPEC 6.4 stops being a promise
+  the client keeps and becomes one Postgres keeps.
+- **Attribution cannot be forged.** The insert policy requires `by = auth.uid()`, so a change is always
+  recorded against whoever actually made it.
+- Whoever runs the database *can* read it from their dashboard. That is inherent to hosting, and
+  [docs/HOSTING.md](docs/HOSTING.md) says so plainly rather than pretending otherwise.
+
+**Named individuals are flagged** in both modes. Where a stakeholder looks like a person rather than an
+organisation, the editor surfaces a note about data-protection obligations — under UK/EU GDPR and
+comparable regimes a written adverse assessment of an identifiable person is personal data, and they have a
+right of access to it. The UI nudges toward mapping roles and institutions instead.
+
+**Export is complete and easy** in both modes. Users who can leave will trust the tool.
 
 ## Architecture
 
 ```
 src/
   domain.js          pure logic — scales, stance, the rationale gate, strategy periods, coverage
-  db.js              IndexedDB; the atomic stakeholder+history commit
   store.js           app state and actions; nothing hits memory before it is durable
+  auth.js            accounts, organisations, members, invite links
+  supabaseClient.js  connection and human-readable error translation
+  backends/
+    index.js         which storage mode is live
+    local.js         IndexedDB; the atomic stakeholder+history commit
+    cloud.js         Supabase Postgres, scoped to one organisation
+    rows.js          domain <-> database row mapping (pure, heavily tested)
   example.js         the demo map (entirely fictional)
   io/
     csv.js           RFC-4180-ish parser, column guessing, export with formula-injection guards
@@ -201,13 +225,18 @@ src/
     mapview.js       tiles and the sortable table
     movement.js  coverage.js  data.js  projects.js
     modal.js         dialogs   importwizard.js  the CSV mapping wizard
+    account.js       sign-in, organisations, members, invites, migration
   pwa.js             service-worker registration and the install prompt
 public/              copied to dist as-is
   manifest.webmanifest   sw.js   icon-*.png
 scripts/
   make-icons.mjs     generates the PNG icons with zlib and no dependencies
+supabase/
+  migrations/0001_init.sql   tables, RLS policies, membership functions
+docs/
+  HOSTING.md         setting up the hosted backend
 test/
-  domain.test.js  38   io.test.js  33   sw.test.js  9      (80 total)
+  domain.test.js 38  io.test.js 33  rows.test.js 16  sw.test.js 9   (96 total)
 ```
 
 Two rules worth knowing before changing anything:
@@ -215,6 +244,11 @@ Two rules worth knowing before changing anything:
 **The atomic commit.** `db.commitChange` writes the updated stakeholder and its history row in one
 IndexedDB transaction, and `store.commit` does not touch in-memory state until that transaction reports
 `complete`. There is nothing to roll back on failure because nothing was applied. Keep it that way.
+
+**Isolation is the database's job, not the client's.** In hosted mode, never filter by organisation in
+JavaScript and consider it done. Every table carries `org_id` and every policy checks membership, so the
+app can be wrong without leaking. Keep it that way: no new table without RLS, and no UPDATE or DELETE
+policy on `changes`, ever.
 
 **The editor owns its DOM while dirty.** `app.js` will not re-render the detail editor while `state.dirty`
 is true. A re-render under a typing user swallows the rationale they were halfway through writing.
@@ -239,10 +273,15 @@ contains, why opponents need one too) come from that skill's `references/scoring
 
 ## Status and scope
 
-This is the MVP described in `Stakeholder_Tracker_App_SPEC.md` §7. Deliberately **not** built:
+The MVP described in `Stakeholder_Tracker_App_SPEC.md` §7, plus the hosted sync and accounts the spec
+places in Phase 2. Deliberately **not** built:
 
-- No hosted sync, accounts, or shared editing (spec Phase 2 — and §11.3 says ask five organisations first).
-- No cross-organisation sharing or pooled directory, ever. See the spec's §10.
+- No cross-organisation sharing or pooled directory, ever. Each organisation's data is entirely its own.
+  It sounds valuable and it is out of scope permanently — see the spec's §10 for why.
+- No real-time collaborative editing. Two people editing one stakeholder simultaneously is not a real use
+  case at this scale, and pretending otherwise buys a lot of complexity for nothing.
+- No billing. Organisations are already the unit that would be charged, so nothing blocks adding it — but
+  not before anyone asks to pay.
 - Not a CRM, not project management, not a network graph of relationships *between* stakeholders.
 - Not an assessment engine. The tool does not tell you what a score should be. It records what you decided
   and holds you to explaining it.
@@ -255,6 +294,15 @@ This is the MVP described in `Stakeholder_Tracker_App_SPEC.md` §7. Deliberately
 - **Deleting a stakeholder deletes its history.** It is the one irreversible action. The confirmation
   suggests scoring power to 0 with an explanation instead, which keeps the record.
 - **PNG text uses a system font stack**, since an SVG rasterised through an `<img>` cannot load page fonts.
+- **Hosted mode requires a connection.** Offline works in local mode only. The Supabase client has no
+  offline cache, and a sync layer with conflict resolution is a much larger piece of work than it looks.
+- **Concurrent edits are last-write-wins** on the scores. No history is lost either way — both edits append
+  their own entry — but two people editing one stakeholder at the same moment will see one set of numbers
+  win. SPEC 12 judges that not to be a real use case at this scale.
+- **A hosted save is two writes, not one transaction.** PostgREST cannot span a transaction across
+  requests, so `commitChange` writes the history row first and the current scores second. If the second
+  fails, the record survives and the scores are stale — recoverable by reloading. The local backend has a
+  real IndexedDB transaction and does not have this caveat.
 - **Offline support needs a secure context.** Service workers require `https` or `localhost`; on a plain-http
   LAN address the app runs normally but without offline caching or the Install button.
 - **All of a project's history is held in memory** while it is open. The spec's budget is thousands of change

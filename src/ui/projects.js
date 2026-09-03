@@ -7,7 +7,7 @@
 
 import { esc, fmtAgo, plural } from "./dom.js";
 
-export function renderProjects(host, projects, handlers) {
+export function renderProjects(host, projects, handlers, ctx = {}) {
   const list = projects.length
     ? `<div class="projlist">${projects
         .map(
@@ -46,7 +46,13 @@ export function renderProjects(host, projects, handlers) {
 
   host.innerHTML = `
     <h2 style="margin-top:6px">${projects.length ? plural(projects.length, "map") : "No maps yet"}</h2>
-    ${projects.length ? '<p class="note">Each map is stored in this browser, on this machine. Nothing is uploaded.</p>' : ""}
+    ${
+      projects.length
+        ? ctx.mode === "cloud"
+          ? `<p class="note">Shared with everyone in ${esc(ctx.orgName || "your organisation")}.</p>`
+          : '<p class="note">Each map is stored in this browser, on this machine. Nothing is uploaded.</p>'
+        : ""
+    }
     ${list}
 
     <footer>
@@ -57,10 +63,22 @@ export function renderProjects(host, projects, handlers) {
         that starts a new strategy period, and the record shows what the scores did while it was in force. That is
         how you find out whether an approach worked instead of assuming it did — though movement during an
         approach is not proof the approach caused it.</p>
-      <p><strong>Where your data lives.</strong> In this browser only. There is no account, no server and no
-        copy anywhere else, which is deliberate: this tool holds adverse judgements about named organisations
-        and sometimes named people. It also means clearing your browser data destroys it, and a colleague on
-        another machine cannot see it. Use <em>Export everything (JSON)</em> to keep a backup and to share.</p>
+      <p>${
+        ctx.mode === "cloud"
+          ? `<strong>Where your data lives.</strong> On the server, in <em>${esc(ctx.orgName || "your organisation")}</em>'s
+             own area of the database. Every member of that organisation can see and edit these maps; nobody
+             outside it can, and that boundary is enforced by the database rather than by this page. Recorded
+             history cannot be edited or deleted by anyone, including an admin — a correction is a new entry.`
+          : `<strong>Where your data lives.</strong> In this browser only. No account, no server, no copy
+             anywhere else. That is deliberate — this tool holds adverse judgements about named organisations
+             and sometimes named people. It also means clearing your browser data destroys it, and a colleague
+             on another machine cannot see it. Use <em>Download JSON</em> to keep a backup and to share.${
+               ctx.cloudAvailable
+                 ? ` If you would rather your team shared one copy, <strong>sign in</strong> and your maps move to
+                    your organisation's private storage.`
+                 : ""
+             }`
+      }</p>
     </footer>`;
 
   const on = (id, fn) => {

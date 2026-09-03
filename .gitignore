@@ -8,3 +8,8 @@ dist/
 # ("Decisions for the client") is written for the commissioner, not the public,
 # so it is deliberately not published. Remove this line to include it.
 Stakeholder_Tracker_App_SPEC.md
+
+# Local Supabase credentials for development (the deployed build gets these
+# from GitHub Actions variables/secrets instead).
+.env
+.env.local

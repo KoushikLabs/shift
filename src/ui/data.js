@@ -10,7 +10,7 @@
  * lying to the user about what it guarantees.
  */
 
-import { storageEstimate } from "../db.js";
+import { local } from "../backends/index.js";
 import { esc, fmtDateTime, plural } from "./dom.js";
 
 export function renderData(host, ctx) {
@@ -83,8 +83,7 @@ export function renderData(host, ctx) {
     <div class="datacard">
       <h3>Delete this map</h3>
       <p>Removes the map, its ${plural(stakeholders.length, "stakeholder")} and all
-         ${plural(changeCount, "recorded change")}. This cannot be undone, and there is no copy on a server
-         to recover from. Export first.</p>
+         ${plural(changeCount, "recorded change")}. This cannot be undone. Export first.</p>
       <div class="actions" style="margin:0"><button class="danger" id="delProject">Delete “${esc(project.name)}”…</button></div>
     </div>
   </div>`;
@@ -103,28 +102,49 @@ export function renderData(host, ctx) {
   on("editProject", ctx.onEditProject);
   on("delProject", ctx.onDeleteProject);
 
-  describeStorage(host);
+  describeStorage(host, ctx);
 }
 
-async function describeStorage(host) {
+async function describeStorage(host, ctx) {
   const body = host.querySelector("#storageBody");
   const kv = host.querySelector("#storageKv");
   if (!body) return;
 
+  if (ctx.mode === "cloud") {
+    body.innerHTML = `On the server, in <strong>${esc(ctx.orgName || "your organisation")}</strong>'s own area of the
+      database. Everyone you have invited to that organisation can see and edit these maps; nobody outside it
+      can. Access is enforced by the database itself, not just by this page.
+      <br><br>Recorded history is <strong>append-only at the database level</strong> — a change can be corrected
+      with a new entry, but no one, including an admin, can edit or delete what was already recorded.`;
+    const rows = [
+      ["Stored", "Server (per organisation)"],
+      ["Visible to", ctx.memberCount != null ? `${ctx.memberCount} member${ctx.memberCount === 1 ? "" : "s"}` : "members of this organisation"],
+      ["History", "Append-only, enforced by Postgres"],
+      ["Offline", "Not available while signed in"],
+    ];
+    kv.innerHTML = rows.map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("");
+    return;
+  }
+
   let persisted = false;
   try {
-    persisted =
-      navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
+    persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
   } catch (e) {
     persisted = false;
   }
 
-  body.innerHTML = persisted
-    ? "In this browser's own database, on this machine. The browser has granted <strong>persistent</strong> storage, so it will not be evicted to reclaim space. It is still lost if you clear site data, use a different browser, or lose the machine."
-    : "In this browser's own database, on this machine. The browser has <strong>not</strong> granted persistent storage, which means it may be evicted under storage pressure. It is also lost if you clear site data, use a different browser, or lose the machine. <strong>Export regularly.</strong>";
+  body.innerHTML =
+    "In this browser's own database, on this machine. Not on a server, and not visible to colleagues. " +
+    (persisted
+      ? "The browser has granted <strong>persistent</strong> storage, so it will not be evicted to reclaim space."
+      : "The browser has <strong>not</strong> granted persistent storage, so it may be evicted under storage pressure. Installing Shift as an app usually fixes that.") +
+    " It is lost if you clear site data, use a different browser, or lose the machine. <strong>Export regularly.</strong>";
 
-  const est = await storageEstimate();
-  const rows = [["Persistent", persisted ? "granted" : "not granted"]];
+  const est = await local.storageEstimate();
+  const rows = [
+    ["Stored", "This browser only"],
+    ["Persistent", persisted ? "granted" : "not granted"],
+  ];
   if (est && est.usage != null) {
     rows.push(["Used by this site", fmtBytes(est.usage)]);
     if (est.quota) rows.push(["Browser allowance", fmtBytes(est.quota)]);

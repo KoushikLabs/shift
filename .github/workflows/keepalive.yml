@@ -1,0 +1,40 @@
+# Stop the free Supabase project pausing.
+#
+# Free projects are paused after 7 days without database activity and must then
+# be restored by hand. Shift is used after meetings, often weeks apart, so the
+# pause would be hit constantly in normal use. This runs a trivial query twice a
+# week to keep the clock reset.
+#
+# Delete this workflow once the project is on a paid plan — it does nothing there.
+
+name: Keep database awake
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4" # Mondays and Thursdays, 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Touch the database
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::notice::No Supabase configured; nothing to keep awake."
+            exit 0
+          fi
+          code=$(curl -s -o /tmp/out -w '%{http_code}' -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/keepalive" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "HTTP $code"; cat /tmp/out; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Keep-alive failed with HTTP $code. The project may already be paused — restore it in the Supabase dashboard."
+            exit 1
+          fi
