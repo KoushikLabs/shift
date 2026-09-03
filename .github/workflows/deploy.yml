@@ -47,15 +47,14 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: npm run build
 
-      - name: Fail if the build reaches out to the network
-        # SPEC 10 — private by architecture. The page must load nothing from a
-        # third party, so a stray CDN link is a release blocker, not a nitpick.
-        run: |
-          if grep -oE 'https?://[^"'"'"' )]+' dist/index.html | grep -v '://www\.w3\.org/' ; then
-            echo "::error::dist/index.html references an external URL. See SPEC 10."
-            exit 1
-          fi
-          echo "No external references."
+      - name: Fail if the build would contact a third party
+        # SPEC 10 — private by architecture. Checks loadable subresources, not
+        # bare URL strings: the SDK contains documentation links in its error
+        # messages, and a check that cannot tell those from a fetch gets
+        # switched off the first time it cries wolf.
+        env:
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+        run: node scripts/check-no-external.mjs dist/index.html
 
       - uses: actions/configure-pages@v5
 

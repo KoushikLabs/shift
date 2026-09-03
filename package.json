@@ -1,17 +1,18 @@
 {
   "name": "shift-stakeholder-tracker",
   "version": "0.1.0",
-  "description": "Shift — a stakeholder tracker that versions the score, the reasoning and the engagement strategy together, so you can see which approach moved whom and when.",
+  "description": "Shift \u2014 a stakeholder tracker that versions the score, the reasoning and the engagement strategy together, so you can see which approach moved whom and when.",
   "license": "MIT",
   "private": false,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "icons": "node scripts/make-icons.mjs",
-    "build": "node scripts/make-icons.mjs && vite build",
+    "build": "node scripts/make-icons.mjs && vite build && node scripts/check-no-external.mjs dist/index.html",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check": "node scripts/check-no-external.mjs dist/index.html"
   },
   "devDependencies": {
     "jsdom": "^25.0.1",
