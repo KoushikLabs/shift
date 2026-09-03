@@ -1,0 +1,35 @@
+{
+  "name": "shift-stakeholder-tracker",
+  "version": "0.1.0",
+  "description": "Shift \u2014 a stakeholder tracker that versions the score, the reasoning and the engagement strategy together, so you can see which approach moved whom and when.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "icons": "node scripts/make-icons.mjs",
+    "build": "node scripts/make-icons.mjs && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "vite": "^5.4.11",
+    "vite-plugin-singlefile": "^2.0.3",
+    "vitest": "^2.1.8"
+  },
+  "homepage": "https://koushiklabs.github.io/shift/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KoushikLabs/shift.git"
+  },
+  "keywords": [
+    "stakeholder-mapping",
+    "advocacy",
+    "monitoring-evaluation",
+    "power-interest",
+    "local-first",
+    "pwa"
+  ]
+}

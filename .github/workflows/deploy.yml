@@ -1,0 +1,68 @@
+# Build and publish to GitHub Pages on every push to main.
+#
+# The tests run before the deploy on purpose. This tool's whole claim is that
+# the record is being kept, so a build that fails the rationale-gate or
+# append-only-history tests must never reach the URL organisations rely on.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; always finish the newest one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Fail if the build reaches out to the network
+        # SPEC 10 — private by architecture. The page must load nothing from a
+        # third party, so a stray CDN link is a release blocker, not a nitpick.
+        run: |
+          if grep -oE 'https?://[^"'"'"' )]+' dist/index.html | grep -v '://www\.w3\.org/' ; then
+            echo "::error::dist/index.html references an external URL. See SPEC 10."
+            exit 1
+          fi
+          echo "No external references."
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

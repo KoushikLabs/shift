@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+.vite/
+
+# The specification is the internal brief this was built from. Section 11
+# ("Decisions for the client") is written for the commissioner, not the public,
+# so it is deliberately not published. Remove this line to include it.
+Stakeholder_Tracker_App_SPEC.md
