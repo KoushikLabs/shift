@@ -4,10 +4,12 @@ dist/
 *.local
 .vite/
 
-# The specification is the internal brief this was built from. Section 11
-# ("Decisions for the client") is written for the commissioner, not the public,
-# so it is deliberately not published. Remove this line to include it.
+# The specifications are the internal brief this was built from. Their
+# "decisions outstanding" sections are written for the commissioner, not the
+# public, so they are deliberately not published. Remove these lines to include
+# them.
 Stakeholder_Tracker_App_SPEC.md
+SPEC.md
 
 # Local Supabase credentials for development (the deployed build gets these
 # from GitHub Actions variables/secrets instead).
