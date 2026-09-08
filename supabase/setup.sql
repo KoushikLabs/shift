@@ -816,14 +816,18 @@ alter table public.stakeholders
 
 
 -- ============================================================================
--- VERIFICATION — run this after the above, and read the output
+-- VERIFICATION — run this in the SQL editor after the above
 -- ============================================================================
 --
--- Paste the two queries below as a second statement. Both must come back the
--- way the comments say, or something is wrong and you should stop.
+-- IMPORTANT: the Supabase SQL editor connects as the `postgres` role, which
+-- BYPASSES Row Level Security. A plain `update public.changes ...` run here
+-- will SUCCEED even though the guarantee is perfectly intact — it is testing
+-- the superuser, not the app. Use the checks below instead.
 
--- 1. Every table must report rowsecurity = true. A false here means that table
---    is readable by anyone holding the public anon key.
+-- ---------------------------------------------------------------------------
+-- 1. Row Level Security is on. Ten rows, every one true.
+--    A false means that table is readable by anyone holding the public key.
+-- ---------------------------------------------------------------------------
 --
 --   select tablename, rowsecurity from pg_tables
 --    where schemaname = 'public'
@@ -832,12 +836,42 @@ alter table public.stakeholders
 --                        'markers','observations','cycles')
 --    order by tablename;
 
--- 2. History must be un-rewritable. Each of these must FAIL with a permission
---    error. If any succeeds, the append-only guarantee is not in place.
+-- ---------------------------------------------------------------------------
+-- 2. History is append-only, checked structurally. This reads the catalogue,
+--    so it cannot touch data and cannot give a false pass.
 --
---   update public.changes set rationale = 'tampered';
---   delete from public.changes;
---   update public.observations set narrative = 'tampered';
---   delete from public.observations;
+--    Expect exactly four rows: SELECT and INSERT for each of changes and
+--    observations. Any UPDATE or DELETE row means the guarantee is gone.
+-- ---------------------------------------------------------------------------
+--
+--   select tablename, cmd, policyname from pg_policies
+--    where schemaname = 'public' and tablename in ('changes','observations')
+--    order by tablename, cmd;
+
+-- ---------------------------------------------------------------------------
+-- 3. And the table grants agree. Expect INSERT and SELECT only, for both
+--    tables and both roles. UPDATE or DELETE appearing here is a failure.
+-- ---------------------------------------------------------------------------
+--
+--   select table_name, grantee, privilege_type
+--     from information_schema.role_table_grants
+--    where table_schema = 'public'
+--      and table_name in ('changes','observations')
+--      and grantee in ('authenticated','anon')
+--    order by table_name, grantee, privilege_type;
+
+-- ---------------------------------------------------------------------------
+-- 4. Optional — prove it behaviourally by impersonating a signed-in user.
+--    Wrapped in a transaction that always rolls back, so it cannot alter
+--    anything even if it unexpectedly succeeds.
+--
+--    Expect: ERROR: permission denied for table changes
+-- ---------------------------------------------------------------------------
+--
+--   begin;
+--     set local role authenticated;
+--     set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"authenticated"}';
+--     update public.changes set rationale = 'tampered';
+--   rollback;
 --
 -- ============================================================================

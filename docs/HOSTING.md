@@ -52,31 +52,58 @@ one organisation'''s data unreadable to another, and the append-only guarantee o
 
 ### Check it actually worked
 
-Run these as a second query. **Both must come back the way this says, or stop.**
+Same place — **SQL Editor → New query**, paste, Run.
+
+> **The SQL editor connects as `postgres`, which bypasses Row Level Security.** That matters: a plain
+> `update public.changes ...` run there will *succeed* even when the append-only guarantee is perfectly
+> intact, because it is testing the superuser rather than the application. The checks below read the
+> catalogue instead, so they cannot give a false pass.
+
+**1. RLS is on.** Ten rows, every one `true`:
 
 ```sql
 select tablename, rowsecurity from pg_tables
- where schemaname = '''public'''
-   and tablename in ('''organisations''','''memberships''','''invites''','''profiles''',
-                     '''projects''','''stakeholders''','''changes''',
-                     '''markers''','''observations''','''cycles''')
+ where schemaname = 'public'
+   and tablename in ('organisations','memberships','invites','profiles',
+                     'projects','stakeholders','changes',
+                     'markers','observations','cycles')
  order by tablename;
 ```
 
-Ten rows, every one showing `rowsecurity = true`. A false means that table is readable by anyone holding the
-public key.
+A single `false` means that table is readable by anyone holding the public anon key. Stop there.
 
-Then confirm history cannot be rewritten. **Each of these must FAIL** with a permission error:
+**2. History is append-only.** Exactly four rows — `SELECT` and `INSERT` for each of the two tables. An
+`UPDATE` or `DELETE` row means the guarantee is gone:
 
 ```sql
-update public.changes set rationale = '''tampered''';
-delete from public.changes;
-update public.observations set narrative = '''tampered''';
-delete from public.observations;
+select tablename, cmd, policyname from pg_policies
+ where schemaname = 'public' and tablename in ('changes','observations')
+ order by tablename, cmd;
 ```
 
-If any of them succeeds, the append-only guarantee is not in place and the behaviour record cannot be trusted
-as evidence.
+**3. And the grants agree** — `INSERT` and `SELECT` only:
+
+```sql
+select table_name, grantee, privilege_type
+  from information_schema.role_table_grants
+ where table_schema = 'public'
+   and table_name in ('changes','observations')
+   and grantee in ('authenticated','anon')
+ order by table_name, grantee, privilege_type;
+```
+
+**4. Optional, and the most convincing** — impersonate a signed-in user. The transaction always rolls back,
+so it cannot alter anything even if it unexpectedly succeeds:
+
+```sql
+begin;
+  set local role authenticated;
+  set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"authenticated"}';
+  update public.changes set rationale = 'tampered';
+rollback;
+```
+
+Expected: `ERROR: permission denied for table changes`. That error *is* the pass.
 
 ## 3. Configure authentication
 
