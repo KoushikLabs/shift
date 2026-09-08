@@ -51,6 +51,7 @@ import { renderProjects } from "./projects.js";
 import { alertDialog, choiceDialog, confirmDialog, formDialog } from "./modal.js";
 import { csvImportDialog } from "./importwizard.js";
 import { buildExport, applyImportMode, describeImport, parseImport, ImportError } from "../io/json.js";
+import { ensureUuids } from "../backends/rows.js";
 import { toCsv } from "../io/csv.js";
 import { downloadBlob, downloadText, copyText, readFile, slug, stamp } from "../io/download.js";
 import { svgToPngBlob, themeColours } from "../io/png.js";
@@ -1159,6 +1160,15 @@ async function importJson() {
     payload = applyImportMode(parsed, "replace");
   }
 
+  // A stakeholder-matrix export carries slug ids ("hspcb", "ngt") because the
+  // skill keys its history off them. IndexedDB accepts any string, so this went
+  // unnoticed in local mode — but a Postgres uuid column rejects them outright.
+  //
+  // ensureUuids re-keys only what is not already a uuid, consistently across
+  // stakeholders, changes, markers, observations, cycles and triage links, so a
+  // Shift export still re-imports in place with every id untouched.
+  payload = ensureUuids(payload);
+
   try {
     await backend().importProject(payload);
   } catch (e) {
@@ -1166,7 +1176,13 @@ async function importJson() {
     return;
   }
   await store.refreshAfterImport(payload.project.id);
-  store.notify(`Imported ${plural(payload.stakeholders.length, "stakeholder")} with ${plural(payload.changes.length, "history entry", "history entries")}.`, "good");
+  store.notify(
+    `Imported ${plural(payload.stakeholders.length, "stakeholder")} with ${plural(payload.changes.length, "history entry", "history entries")}.` +
+      (payload.remapped
+        ? ` ${payload.remapped} identifiers were renumbered to suit the database; the links between them are unchanged.`
+        : ""),
+    "good"
+  );
 }
 
 function pickJsonText() {

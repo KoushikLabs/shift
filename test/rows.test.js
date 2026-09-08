@@ -456,3 +456,72 @@ describe("ensureUuids with the behaviour layer", () => {
     expect(out.cycles).toEqual([]);
   });
 });
+
+/* ------------------------------------------------------------------------ */
+/* Regression: a stakeholder-matrix export imported into Postgres.           */
+/*                                                                           */
+/* The skill keys its history off slug ids ("hspcb"), and parseImport keeps  */
+/* them on purpose. IndexedDB accepts any string so this passed locally,     */
+/* while Postgres rejected it with:                                          */
+/*     invalid input syntax for type uuid: "hspcb"                           */
+/* ------------------------------------------------------------------------ */
+
+describe("importing a stakeholder-matrix export into a uuid database", () => {
+  const skillShaped = () => ({
+    project: { id: newId(), name: "Ring 1 Stakeholder Matrix" },
+    stakeholders: [
+      { id: "hspcb", projectId: "p", name: "Haryana State Pollution Control Board", reach: "partner" },
+      { id: "ngt", projectId: "p", name: "National Green Tribunal", reach: "partner" },
+      { id: "ahd", projectId: "p", name: "State Animal Husbandry Departments", reach: "out-of-reach", reachableVia: ["hspcb"] },
+    ],
+    changes: [
+      { id: "c1", projectId: "p", stakeholderId: "hspcb", changedFields: ["power", "interest", "rationale"] },
+    ],
+  });
+
+  it("re-keys every slug id to a uuid Postgres will accept", () => {
+    const out = ensureUuids(skillShaped());
+    for (const s of out.stakeholders) expect(isUuid(s.id), s.name).toBe(true);
+    for (const c of out.changes) expect(isUuid(c.id)).toBe(true);
+    expect(isUuid(out.project.id)).toBe(true);
+    expect(out.remapped).toBeGreaterThan(0);
+  });
+
+  it("keeps the history pointing at the right actor after re-keying", () => {
+    const out = ensureUuids(skillShaped());
+    const hspcb = out.stakeholders.find((s) => s.name.startsWith("Haryana"));
+    expect(out.changes[0].stakeholderId).toBe(hspcb.id);
+    expect(out.changes[0].projectId).toBe(out.project.id);
+  });
+
+  it("re-keys triage links too, so an out-of-reach actor keeps its route in", () => {
+    // Missed on the first pass: reachableVia holds stakeholder ids and has to
+    // follow the re-key, or the only actionable thing about an unreachable
+    // actor is silently lost.
+    const out = ensureUuids(skillShaped());
+    const ahd = out.stakeholders.find((s) => s.reach === "out-of-reach");
+    const hspcb = out.stakeholders.find((s) => s.name.startsWith("Haryana"));
+    expect(ahd.reachableVia).toEqual([hspcb.id]);
+    expect(isUuid(ahd.reachableVia[0])).toBe(true);
+  });
+
+  it("drops a triage link pointing at an actor that is not in the file", () => {
+    const m = skillShaped();
+    m.stakeholders[2].reachableVia = ["hspcb", "does-not-exist"];
+    const out = ensureUuids(m);
+    expect(out.stakeholders[2].reachableVia).toHaveLength(1);
+  });
+
+  it("leaves a Shift export completely untouched, so re-import still replaces in place", () => {
+    const pid = newId();
+    const sid = newId();
+    const out = ensureUuids({
+      project: { id: pid, name: "Already uuids" },
+      stakeholders: [{ id: sid, projectId: pid, name: "Board", reachableVia: [] }],
+      changes: [{ id: newId(), projectId: pid, stakeholderId: sid, changedFields: [] }],
+    });
+    expect(out.remapped).toBe(0);
+    expect(out.project.id).toBe(pid);
+    expect(out.stakeholders[0].id).toBe(sid);
+  });
+});

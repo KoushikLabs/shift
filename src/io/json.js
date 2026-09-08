@@ -396,7 +396,16 @@ export function applyImportMode({ project, stakeholders, changes, markers = [], 
 
   return {
     project: { ...project, id: projectId, name: dedupeName(project.name), createdAt: nowISO(), updatedAt: nowISO() },
-    stakeholders: stakeholders.map((s) => ({ ...s, id: idMap.get(s.id), projectId })),
+    stakeholders: stakeholders.map((s) => ({
+      ...s,
+      id: idMap.get(s.id),
+      projectId,
+      // Same reason as ensureUuids: a triage link is a stakeholder id and must
+      // be re-keyed with everything else.
+      reachableVia: (Array.isArray(s.reachableVia) ? s.reachableVia : [])
+        .map((v) => idMap.get(v))
+        .filter(Boolean),
+    })),
     changes: changes.map((c) => ({
       ...c,
       id: newId(),

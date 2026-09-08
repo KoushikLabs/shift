@@ -304,7 +304,18 @@ export function ensureUuids({ project, stakeholders, changes, markers = [], obse
   };
 
   const nextProject = { ...project, id: idFor(project.id) };
-  const nextStakeholders = stakeholders.map((s) => ({ ...s, id: idFor(s.id), projectId: nextProject.id }));
+  const knownStakeholders = new Set(stakeholders.map((s) => s.id));
+  const nextStakeholders = stakeholders.map((s) => ({
+    ...s,
+    id: idFor(s.id),
+    projectId: nextProject.id,
+    // Triage links point at other stakeholders, so they have to follow the
+    // re-key. Miss this and an out-of-reach actor silently loses the record of
+    // who can reach them — which is the only thing that makes it actionable.
+    reachableVia: (Array.isArray(s.reachableVia) ? s.reachableVia : [])
+      .filter((v) => knownStakeholders.has(v))
+      .map(idFor),
+  }));
   const nextChanges = changes
     // A history row whose stakeholder is gone would violate the foreign key and
     // abort the import; drop it rather than lose the whole map.
