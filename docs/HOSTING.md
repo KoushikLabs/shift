@@ -43,6 +43,8 @@ keep a full longitudinal record on its own machine, with you holding nothing.
 1. In the Supabase dashboard, open **SQL Editor → New query**.
 2. Paste the entire contents of [`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql).
 3. Run it. It should finish with no errors, and it is safe to re-run.
+4. Do the same with [`supabase/migrations/0002_behaviour.sql`](../supabase/migrations/0002_behaviour.sql), which
+   adds the actor triage, map depth, and the markers / observations / cycles tables. Also safe to re-run.
 
 This creates the tables, the Row Level Security policies that keep organisations apart, and the functions
 that handle sign-up, invites and membership.
@@ -54,7 +56,8 @@ Still in the SQL editor, run:
 ```sql
 select tablename, rowsecurity from pg_tables
  where schemaname = 'public'
-   and tablename in ('organisations','memberships','projects','stakeholders','changes','invites','profiles');
+   and tablename in ('organisations','memberships','projects','stakeholders','changes','invites','profiles',
+                     'markers','observations','cycles');
 ```
 
 Every row must show `rowsecurity = true`. If any is false, stop — that table is readable by anyone with the
@@ -65,6 +68,8 @@ Then confirm history really is append-only. Both of these must **fail**:
 ```sql
 update public.changes set rationale = 'tampered' where id = (select id from public.changes limit 1);
 delete from public.changes where id = (select id from public.changes limit 1);
+update public.observations set narrative = 'tampered' where id = (select id from public.observations limit 1);
+delete from public.observations where id = (select id from public.observations limit 1);
 ```
 
 ## 3. Configure authentication

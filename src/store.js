@@ -11,9 +11,14 @@ import { initAuth, onAuthChange, session as auth } from "./auth.js";
 import { cloudConfigured } from "./supabaseClient.js";
 import {
   changedFields,
+  makeCycle,
+  makeMarker,
+  makeObservation,
   makeProject,
   makeStakeholder,
   newId,
+  normalizeDepth,
+  normalizeReach,
   normalizeStrategy,
   nowISO,
   clampPower,
@@ -35,6 +40,12 @@ export const state = {
   stakeholders: [],
   /** stakeholderId -> Change[] (unsorted; sort at read time). */
   changes: new Map(),
+  /** stakeholderId -> Marker[] */
+  markers: new Map(),
+  /** markerId -> Observation[] */
+  observations: new Map(),
+  /** Cycle[], newest first. */
+  cycles: [],
 
   /** id of the open stakeholder, or null. */
   selectedId: null,
@@ -109,6 +120,7 @@ export async function reconcileMode({ initial = false } = {}) {
     state.project = null;
     state.stakeholders = [];
     state.changes = new Map();
+    clearBehaviour();
     state.selectedId = null;
     state.dirty = false;
   }
@@ -192,6 +204,9 @@ export async function openProject(id) {
     state.project = loaded.project;
     state.stakeholders = loaded.stakeholders.sort(byName);
     state.changes = indexChanges(loaded.changes);
+    state.markers = indexBy(loaded.markers, "stakeholderId");
+    state.observations = indexBy(loaded.observations, "markerId");
+    state.cycles = (loaded.cycles || []).slice().sort((a, b) => String(b.openedAt).localeCompare(String(a.openedAt)));
     state.selectedId = null;
     state.detailTab = "score";
     state.view = "map";
@@ -209,6 +224,7 @@ export async function closeProject() {
   state.project = null;
   state.stakeholders = [];
   state.changes = new Map();
+  clearBehaviour();
   state.selectedId = null;
   state.dirty = false;
   state.projects = await backend().listProjects();
@@ -240,6 +256,7 @@ export async function deleteProject(id) {
     state.project = null;
     state.stakeholders = [];
     state.changes = new Map();
+    clearBehaviour();
     state.selectedId = null;
     backend().setMeta("lastProjectId", null);
   }
@@ -286,7 +303,7 @@ export async function addStakeholdersBulk(list) {
 }
 
 /** Identity fields only. SPEC 8 versions power/interest/rationale/strategy — not the name. */
-export async function updateStakeholderIdentity(id, { name, type, isIndividual }) {
+export async function updateStakeholderIdentity(id, { name, type, isIndividual, reach, reachableVia }) {
   const s = state.stakeholders.find((x) => x.id === id);
   if (!s) return { ok: false };
   const next = {
@@ -294,6 +311,10 @@ export async function updateStakeholderIdentity(id, { name, type, isIndividual }
     name: name != null ? String(name).trim() : s.name,
     type: type != null ? String(type).trim() : s.type,
     isIndividual: isIndividual != null ? Boolean(isIndividual) : s.isIndividual,
+    // SPEC v2 §5. Triage is identity, not score: it says what kind of
+    // relationship this is, so it is not versioned in the change log.
+    reach: reach != null ? normalizeReach(reach) : normalizeReach(s.reach),
+    reachableVia: reachableVia != null ? reachableVia.filter(Boolean) : s.reachableVia || [],
   };
   if (!next.name) return { ok: false, message: "A stakeholder needs a name." };
   try {
@@ -315,6 +336,8 @@ export async function deleteStakeholder(id) {
   }
   state.stakeholders = state.stakeholders.filter((x) => x.id !== id);
   state.changes.delete(id);
+  for (const m of state.markers.get(id) || []) state.observations.delete(m.id);
+  state.markers.delete(id);
   if (state.selectedId === id) {
     state.selectedId = null;
     state.dirty = false;
@@ -391,6 +414,178 @@ export async function commit(id, next, note = "") {
   bumpProject();
   emit();
   return { ok: true, change };
+}
+
+/* ------------------------------------------- SPEC v2 §5 — behaviour layer */
+
+export async function setDepth(depth) {
+  return updateProject({ depth: normalizeDepth(depth) });
+}
+
+export async function addMarker(stakeholderId, fields) {
+  if (!state.project) return { ok: false };
+  const m = makeMarker(state.project.id, stakeholderId, fields);
+  if (!m.text) return { ok: false, message: "A behaviour needs some text." };
+  try {
+    await backend().putMarker(m, touchProject());
+  } catch (e) {
+    return fail(e);
+  }
+  state.markers.set(stakeholderId, [...(state.markers.get(stakeholderId) || []), m]);
+  bumpProject();
+  emit();
+  return { ok: true, marker: m };
+}
+
+export async function updateMarker(markerId, fields) {
+  const m = findMarker(markerId);
+  if (!m) return { ok: false };
+  const next = { ...m, ...fields };
+  if (fields.text != null) next.text = String(fields.text).trim();
+  if (!next.text) return { ok: false, message: "A behaviour needs some text." };
+  try {
+    await backend().putMarker(next, touchProject());
+  } catch (e) {
+    return fail(e);
+  }
+  replaceMarker(next);
+  bumpProject();
+  emit();
+  return { ok: true };
+}
+
+/**
+ * Retire rather than delete, once a marker has been observed.
+ *
+ * Deleting it would erase the fact that this was something the organisation
+ * said it was watching, and orphan the observations that scored it. The annual
+ * review is expected to retire markers that turned out not to be useful; that
+ * is a normal act, and the record should show it happened.
+ */
+export async function retireMarker(markerId) {
+  const m = findMarker(markerId);
+  if (!m) return { ok: false };
+  return updateMarker(markerId, { retired: true, retiredAt: nowISO(), watched: false });
+}
+
+export async function restoreMarker(markerId) {
+  return updateMarker(markerId, { retired: false, retiredAt: null });
+}
+
+/** Only safe when nothing has ever been recorded against it. */
+export async function deleteMarker(markerId) {
+  const m = findMarker(markerId);
+  if (!m) return { ok: false };
+  if ((state.observations.get(markerId) || []).length) {
+    return { ok: false, message: "This behaviour has been reviewed, so it is retired rather than deleted." };
+  }
+  try {
+    await backend().deleteMarker(markerId);
+  } catch (e) {
+    return fail(e);
+  }
+  const list = (state.markers.get(m.stakeholderId) || []).filter((x) => x.id !== markerId);
+  state.markers.set(m.stakeholderId, list);
+  bumpProject();
+  emit();
+  return { ok: true };
+}
+
+export async function setMarkerWatched(markerId, watched) {
+  return updateMarker(markerId, { watched: Boolean(watched) });
+}
+
+/**
+ * Record one reflection cycle: the summary and every observation it produced,
+ * written together. Nothing reaches memory until the backend confirms.
+ *
+ * `entries` is [{markerId, observed, narrative, evidence, contribution, significance}].
+ */
+export async function commitCycle(cycleFields, entries) {
+  if (!state.project) return { ok: false };
+  const cycle = makeCycle(state.project.id, { ...cycleFields, closedAt: nowISO() });
+
+  const observations = [];
+  for (const e of entries || []) {
+    const m = findMarker(e.markerId);
+    if (!m) continue;
+    observations.push(makeObservation(state.project.id, m.stakeholderId, m.id, cycle.id, e));
+  }
+  if (!observations.length) return { ok: false, message: "Nothing was reviewed, so there is nothing to record." };
+
+  try {
+    await backend().commitCycle(cycle, observations, touchProject());
+  } catch (e) {
+    return fail(e);
+  }
+
+  for (const o of observations) {
+    state.observations.set(o.markerId, [...(state.observations.get(o.markerId) || []), o]);
+  }
+  state.cycles = [cycle, ...state.cycles];
+  bumpProject();
+  emit();
+  return { ok: true, cycle, count: observations.length };
+}
+
+export function markersFor(stakeholderId) {
+  return state.markers.get(stakeholderId) || [];
+}
+
+export function liveMarkersFor(stakeholderId) {
+  return markersFor(stakeholderId).filter((m) => !m.retired);
+}
+
+export function observationsFor(markerId) {
+  return state.observations.get(markerId) || [];
+}
+
+/** Every observation belonging to one stakeholder, across all its markers. */
+export function observationsForStakeholder(stakeholderId) {
+  const out = [];
+  for (const m of markersFor(stakeholderId)) out.push(...observationsFor(m.id));
+  return out;
+}
+
+export function allMarkers() {
+  const out = [];
+  for (const list of state.markers.values()) out.push(...list);
+  return out;
+}
+
+export function allObservations() {
+  const out = [];
+  for (const list of state.observations.values()) out.push(...list);
+  return out;
+}
+
+function findMarker(markerId) {
+  for (const list of state.markers.values()) {
+    const hit = list.find((m) => m.id === markerId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function replaceMarker(next) {
+  const list = (state.markers.get(next.stakeholderId) || []).map((m) => (m.id === next.id ? next : m));
+  state.markers.set(next.stakeholderId, list);
+}
+
+function clearBehaviour() {
+  state.markers = new Map();
+  state.observations = new Map();
+  state.cycles = [];
+}
+
+function indexBy(rows, key) {
+  const m = new Map();
+  for (const r of rows || []) {
+    const list = m.get(r[key]);
+    if (list) list.push(r);
+    else m.set(r[key], [r]);
+  }
+  return m;
 }
 
 /* ---------------------------------------------------------------- selection */

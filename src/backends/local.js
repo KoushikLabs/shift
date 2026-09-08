@@ -19,12 +19,18 @@
  */
 
 export const DB_NAME = "shift";
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export const STORE_PROJECTS = "projects";
 export const STORE_STAKEHOLDERS = "stakeholders";
 export const STORE_CHANGES = "changes";
 export const STORE_META = "meta";
+/* SPEC v2 5 - added at DB_VERSION 2. The contains() guards in
+   onupgradeneeded mean a v1 database gains these stores without touching
+   anything already in it. */
+export const STORE_MARKERS = "markers";
+export const STORE_OBSERVATIONS = "observations";
+export const STORE_CYCLES = "cycles";
 
 export class StorageError extends Error {
   constructor(message, cause) {
@@ -67,6 +73,21 @@ export function openDb() {
       }
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META, { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains(STORE_MARKERS)) {
+        const m = db.createObjectStore(STORE_MARKERS, { keyPath: "id" });
+        m.createIndex("byProject", "projectId", { unique: false });
+        m.createIndex("byStakeholder", "stakeholderId", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_OBSERVATIONS)) {
+        const o = db.createObjectStore(STORE_OBSERVATIONS, { keyPath: "id" });
+        o.createIndex("byProject", "projectId", { unique: false });
+        o.createIndex("byMarker", "markerId", { unique: false });
+        o.createIndex("byStakeholder", "stakeholderId", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_CYCLES)) {
+        const c = db.createObjectStore(STORE_CYCLES, { keyPath: "id" });
+        c.createIndex("byProject", "projectId", { unique: false });
       }
       void ev;
     };
@@ -176,23 +197,32 @@ export function putProject(project) {
 /** Loads a project with everything it owns. Changes are kept in memory — SPEC 8 says thousands, not millions. */
 export async function loadProject(projectId) {
   const db = await openDb();
-  const tx = db.transaction([STORE_PROJECTS, STORE_STAKEHOLDERS, STORE_CHANGES], "readonly");
+  const tx = db.transaction(
+    [STORE_PROJECTS, STORE_STAKEHOLDERS, STORE_CHANGES, STORE_MARKERS, STORE_OBSERVATIONS, STORE_CYCLES],
+    "readonly"
+  );
   const project = await reqAsPromise(tx.objectStore(STORE_PROJECTS).get(projectId));
   if (!project) return null;
   const stakeholders = await getAllFromIndex(tx.objectStore(STORE_STAKEHOLDERS), "byProject", projectId);
   const changes = await getAllFromIndex(tx.objectStore(STORE_CHANGES), "byProject", projectId);
-  return { project, stakeholders, changes };
+  const markers = await getAllFromIndex(tx.objectStore(STORE_MARKERS), "byProject", projectId);
+  const observations = await getAllFromIndex(tx.objectStore(STORE_OBSERVATIONS), "byProject", projectId);
+  const cycles = await getAllFromIndex(tx.objectStore(STORE_CYCLES), "byProject", projectId);
+  return { project, stakeholders, changes, markers, observations, cycles };
 }
 
 /** Deleting a map takes its stakeholders and its history with it, atomically. */
 export function deleteProject(projectId) {
   return runTx(
-    [STORE_PROJECTS, STORE_STAKEHOLDERS, STORE_CHANGES],
+    [STORE_PROJECTS, STORE_STAKEHOLDERS, STORE_CHANGES, STORE_MARKERS, STORE_OBSERVATIONS, STORE_CYCLES],
     "readwrite",
     (s) => {
       s[STORE_PROJECTS].delete(projectId);
       deleteByIndex(s[STORE_STAKEHOLDERS], "byProject", projectId);
       deleteByIndex(s[STORE_CHANGES], "byProject", projectId);
+      deleteByIndex(s[STORE_MARKERS], "byProject", projectId);
+      deleteByIndex(s[STORE_OBSERVATIONS], "byProject", projectId);
+      deleteByIndex(s[STORE_CYCLES], "byProject", projectId);
     },
     "Could not delete the map"
   );
@@ -226,11 +256,13 @@ export function putStakeholder(stakeholder, projectTouch) {
 /** Removing a stakeholder removes its history too; SPEC 5 says ids are never reused. */
 export function deleteStakeholder(stakeholderId) {
   return runTx(
-    [STORE_STAKEHOLDERS, STORE_CHANGES],
+    [STORE_STAKEHOLDERS, STORE_CHANGES, STORE_MARKERS, STORE_OBSERVATIONS],
     "readwrite",
     (s) => {
       s[STORE_STAKEHOLDERS].delete(stakeholderId);
       deleteByIndex(s[STORE_CHANGES], "byStakeholder", stakeholderId);
+      deleteByIndex(s[STORE_MARKERS], "byStakeholder", stakeholderId);
+      deleteByIndex(s[STORE_OBSERVATIONS], "byStakeholder", stakeholderId);
     },
     "Could not delete the stakeholder"
   );
@@ -271,18 +303,88 @@ export async function listChangesForStakeholder(stakeholderId) {
  * moves between devices). One transaction, so a half-imported project is not a
  * state the user can reach.
  */
-export function importProject({ project, stakeholders, changes }) {
+export function importProject({ project, stakeholders, changes, markers = [], observations = [], cycles = [] }) {
   return runTx(
-    [STORE_PROJECTS, STORE_STAKEHOLDERS, STORE_CHANGES],
+    [STORE_PROJECTS, STORE_STAKEHOLDERS, STORE_CHANGES, STORE_MARKERS, STORE_OBSERVATIONS, STORE_CYCLES],
     "readwrite",
     (s) => {
       s[STORE_PROJECTS].put(project);
       for (const st of stakeholders) s[STORE_STAKEHOLDERS].put(st);
       for (const c of changes) s[STORE_CHANGES].put(c);
+      for (const m of markers) s[STORE_MARKERS].put(m);
+      for (const o of observations) s[STORE_OBSERVATIONS].put(o);
+      for (const c of cycles) s[STORE_CYCLES].put(c);
       return project.id;
     },
     "Could not import the map"
   );
+}
+
+/* ------------------------------------------ markers, observations, cycles */
+
+export function putMarker(marker, projectTouch) {
+  return runTx(
+    [STORE_MARKERS, STORE_PROJECTS],
+    "readwrite",
+    (s) => {
+      s[STORE_MARKERS].put(marker);
+      if (projectTouch) s[STORE_PROJECTS].put(projectTouch);
+      return marker;
+    },
+    "Could not save the behaviour"
+  );
+}
+
+export function putMarkers(markers, projectTouch) {
+  return runTx(
+    [STORE_MARKERS, STORE_PROJECTS],
+    "readwrite",
+    (s) => {
+      for (const m of markers) s[STORE_MARKERS].put(m);
+      if (projectTouch) s[STORE_PROJECTS].put(projectTouch);
+      return markers.length;
+    },
+    "Could not save the behaviours"
+  );
+}
+
+/**
+ * Only ever reached for a marker with no observations - store.js checks first.
+ * A marker that has been reviewed is retired rather than deleted, so the record
+ * of what was being watched survives (SPEC v2 5).
+ */
+export function deleteMarker(markerId) {
+  return runTx(
+    STORE_MARKERS,
+    "readwrite",
+    (s) => s[STORE_MARKERS].delete(markerId),
+    "Could not remove the behaviour"
+  );
+}
+
+/**
+ * One reflection cycle, written whole: the cycle row and every observation it
+ * produced, in a single transaction. A half-written cycle would leave a record
+ * claiming a review happened with no findings in it.
+ *
+ * Observations use add(), never put(). They are append-only (SPEC 6.4).
+ */
+export function commitCycle(cycle, observations, projectTouch) {
+  return runTx(
+    [STORE_CYCLES, STORE_OBSERVATIONS, STORE_PROJECTS],
+    "readwrite",
+    (s) => {
+      s[STORE_CYCLES].put(cycle);
+      for (const o of observations) s[STORE_OBSERVATIONS].add(o);
+      if (projectTouch) s[STORE_PROJECTS].put(projectTouch);
+      return { cycle, observations };
+    },
+    "Could not record the review"
+  );
+}
+
+export function putCycle(cycle) {
+  return runTx(STORE_CYCLES, "readwrite", (s) => s[STORE_CYCLES].put(cycle), "Could not save the review");
 }
 
 /** Bulk add of new stakeholders, e.g. from a CSV paste. All or nothing. */

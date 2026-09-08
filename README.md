@@ -80,6 +80,38 @@ These are the reasons it exists rather than a spreadsheet.
 - **Quadrant labels are not a strategy.** Type "monitor" or "keep informed" into an objective and it is
   flagged, in the editor and in the coverage panel.
 
+## Depth
+
+Each map carries one of three depths, set in its settings and changeable at any time.
+
+| | | |
+|---|---|---|
+| **1 · Map** | Score actors on power and interest, say why, name an engagement strategy. | Default |
+| **2 · Watch** | Also record two to four observable behaviours per actor and review them each quarter. | Opt in |
+| **3 · Outcome map** | The four-tier Outcome Mapping ladder — start / like / love / hope-not-to-see. | Opt in |
+
+Depths 2 and 3 share one record: a progress marker is a Watch behaviour with a tier, so moving between them
+sorts what already exists rather than asking for it again, and accumulated observations carry forward.
+
+**Why depth 2 exists.** An organisation that cannot keep two behaviours per actor under review for two quarters
+will not keep a fifteen-rung ladder under review for three years. Finding that out costs half a day instead of a
+failed engagement.
+
+## Judgement beside observation
+
+The reason the two methods are worth joining. Shift records a **judgement** — someone decided this actor sits at
+interest +8, and wrote down why. A progress marker records an **observation** — this actor was seen publishing a
+dated timeline. Neither method holds both, so neither can notice when they disagree:
+
+> Interest +2 → +10. Ladder: 1 of 4 behaviours observed.
+> **Your score has moved further than the behaviour has.**
+
+That lands on the failure each method is known for: the score inflation stakeholder mapping is prone to, and
+Outcome Mapping's own significance gap. It establishes nothing about causation and says so wherever it appears.
+
+Markers never replace the score and no score is derived from them. Collapsing the two readings into one number
+deletes the instrument.
+
 ## The views
 
 - **Map** — power × interest scatter, three-colour by stance, point size by power, zero-interest line drawn,
@@ -87,9 +119,13 @@ These are the reasons it exists rather than a spreadsheet.
   four-tab detail editor.
 - **Movement** — everyone who has moved, direction and magnitude, largest shift first, each paired with the
   strategy that was in force.
+- **Behaviour** *(depth 2+)* — every actor with behaviours recorded, each showing what was judged beside what
+  was observed, and the way into a review cycle.
 - **Coverage** — what is wrong with this map: who has no strategy, which opponents have none, which
   objectives are quadrant labels, who has no rationale, who is neutral or unknown, which entries are named
-  individuals, which strategies have no owner or have gone four months untouched.
+  individuals, which strategies have no owner or have gone four months untouched. At depth 2+ it also flags
+  behaviours that moved backwards, boundary partners with none recorded, ladders nobody has reviewed, and
+  markers that will not score cleanly.
 - **Data** — exports, imports, map settings, and an honest account of where your data lives.
 
 ## Getting your data in and out
@@ -110,7 +146,7 @@ file.
 ```bash
 npm install
 npm run dev      # dev server with hot reload
-npm test         # 96 unit tests: domain, import/export, row mapping, service worker
+npm test         # 149 unit tests: domain, behaviour layer, import/export, row mapping, service worker
 npm run build    # -> dist/ : one HTML file plus icons, manifest, service worker
 ```
 
@@ -226,17 +262,20 @@ src/
     movement.js  coverage.js  data.js  projects.js
     modal.js         dialogs   importwizard.js  the CSV mapping wizard
     account.js       sign-in, organisations, members, invites, migration
+    behaviour.js     markers, the judged/observed instrument, the reflection cycle
   pwa.js             service-worker registration and the install prompt
 public/              copied to dist as-is
   manifest.webmanifest   sw.js   icon-*.png
 scripts/
   make-icons.mjs     generates the PNG icons with zlib and no dependencies
 supabase/
-  migrations/0001_init.sql   tables, RLS policies, membership functions
+  migrations/0001_init.sql        tables, RLS policies, membership functions
+  migrations/0002_behaviour.sql   triage, depth, markers, observations, cycles
 docs/
   HOSTING.md         setting up the hosted backend
 test/
-  domain.test.js 38  io.test.js 33  rows.test.js 16  sw.test.js 9   (96 total)
+  domain.test.js 38  markers.test.js 33  io.test.js 39
+  rows.test.js 30    sw.test.js 9                        (149 total)
 ```
 
 Two rules worth knowing before changing anything:
@@ -244,6 +283,11 @@ Two rules worth knowing before changing anything:
 **The atomic commit.** `db.commitChange` writes the updated stakeholder and its history row in one
 IndexedDB transaction, and `store.commit` does not touch in-memory state until that transaction reports
 `complete`. There is nothing to roll back on failure because nothing was applied. Keep it that way.
+
+**Observations are append-only, like changes.** `observations` has no UPDATE or DELETE policy, for the same
+reason `changes` has none: a behaviour record that can be quietly rewritten is worthless as the thing that
+checks a score. A correction is a new observation in the next cycle, which is also what Outcome Mapping
+practice expects.
 
 **Isolation is the database's job, not the client's.** In hosted mode, never filter by organisation in
 JavaScript and consider it done. Every table carries `org_id` and every policy checks membership, so the

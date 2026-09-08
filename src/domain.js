@@ -387,6 +387,11 @@ export function makeStakeholder(projectId, fields = {}) {
     name: String(fields.name || "").trim(),
     type: String(fields.type || "").trim(),
     isIndividual: Boolean(fields.isIndividual),
+    // SPEC v2 §5 — actor triage. Defaults to partner: most entries on a map are
+    // actors the organisation actually deals with, and calling something a
+    // pressure target should be a decision, not a default.
+    reach: normalizeReach(fields.reach),
+    reachableVia: Array.isArray(fields.reachableVia) ? fields.reachableVia.filter(Boolean) : [],
     power,
     interest,
     rationale,
@@ -405,6 +410,8 @@ export function makeProject(fields = {}) {
     name: String(fields.name || "Untitled map").trim() || "Untitled map",
     description: String(fields.description || ""),
     scaleNote: String(fields.scaleNote || ""),
+    // SPEC v2 §4 — how much measurement machinery this map carries.
+    depth: normalizeDepth(fields.depth),
     createdAt: at,
     updatedAt: fields.updatedAt || at,
   };
@@ -440,3 +447,361 @@ export function interestBand(v) {
 /** SPEC 11.5 flags the name as a placeholder — it is isolated here so it is a one-line change. */
 export const APP_NAME = "Shift";
 export const APP_VERSION = "0.1.0";
+
+/* ==========================================================================
+   SPEC v2 §5 — actor triage
+   ==========================================================================
+   Whether an actor is one you work with, one you are pushing on, or one you
+   cannot currently reach. Outcome Mapping's own sort, and the thing its manual
+   asserts rather than derives.
+
+   REACH IS ORTHOGONAL TO STANCE. A supplier scored -6 that you speak to weekly
+   is a boundary partner; a friendly ministry you cannot get a meeting with is
+   out of reach. Collapsing the two axes is the commonest way this gets built
+   wrong, so they stay separate fields with separate colours throughout.
+*/
+
+export const REACH_VALUES = ["partner", "target", "out-of-reach"];
+
+export const REACH_LABELS = {
+  partner: "Boundary partner",
+  target: "Pressure target",
+  "out-of-reach": "Out of reach",
+};
+
+export const REACH_HINTS = {
+  partner:
+    "You interact with them directly and can anticipate opportunities for influence. Progress markers belong here.",
+  target:
+    "You are applying pressure rather than working together. Score them honestly — the negative half of the interest scale exists for exactly this.",
+  "out-of-reach":
+    "No working relationship. Name who can reach them instead; those are the actors you actually engage.",
+};
+
+export function normalizeReach(v) {
+  return REACH_VALUES.includes(v) ? v : "partner";
+}
+
+export function reachLabel(v) {
+  return REACH_LABELS[normalizeReach(v)];
+}
+
+/** SPEC v2 §7: warn above seven boundary partners. */
+export const BOUNDARY_PARTNER_CEILING = 7;
+
+export function boundaryPartners(stakeholders) {
+  return (stakeholders || []).filter((s) => normalizeReach(s.reach) === "partner");
+}
+
+/* ==========================================================================
+   SPEC v2 §4 — depth
+   ==========================================================================
+   How much measurement machinery this map carries. Distinct from the three
+   STAGES (map / analyse / strategise), which apply at every depth.
+*/
+
+export const DEPTH_MAP = 1;
+export const DEPTH_WATCH = 2;
+export const DEPTH_OUTCOME = 3;
+
+export const DEPTH_LABELS = { 1: "Map", 2: "Watch", 3: "Outcome map" };
+
+export const DEPTH_BLURB = {
+  1: "Score actors on power and interest, say why, and name an engagement strategy.",
+  2: "Also record two to four observable behaviours per actor, and review them each quarter.",
+  3: "The full Outcome Mapping method: vision, outcome challenges, the four-tier ladder and a reflection cycle.",
+};
+
+export function normalizeDepth(v) {
+  const n = Number(v);
+  return n === DEPTH_WATCH || n === DEPTH_OUTCOME ? n : DEPTH_MAP;
+}
+
+/* ==========================================================================
+   SPEC v2 §5 — progress markers
+   ==========================================================================
+   One observable behaviour of one stakeholder. At depth 2 a marker has no tier;
+   at depth 3 it is sorted into the ladder. Same record either way, which is
+   what makes promotion between depths lossless.
+*/
+
+export const MARKER_TIERS = ["start", "like", "love", "regression"];
+
+export const TIER_LABELS = {
+  start: "Start to see",
+  like: "Like to see",
+  love: "Love to see",
+  regression: "Hope not to see",
+};
+
+export const TIER_HINTS = {
+  start: "The earliest response to your inputs — not their current baseline. Three or four.",
+  like: "Active engagement. Six to eight. Draft these last; the real sequence emerges during monitoring.",
+  love: "What profound influence looks like. Three or four. Write these first — they fall out of the outcome challenge.",
+  regression: "Backsliding. Two or three. SPEC 6.13 makes these required, not optional.",
+};
+
+/** Depth weighting for the ladder. Regression is counted separately, never weighted. */
+export const TIER_WEIGHT = { start: 1, like: 2, love: 3, regression: 0 };
+
+export function normalizeTier(v) {
+  return MARKER_TIERS.includes(v) ? v : null;
+}
+
+export const OBSERVED_VALUES = ["yes", "not-yet", "backwards"];
+
+export const OBSERVED_LABELS = {
+  yes: "Observed",
+  "not-yet": "Not yet",
+  backwards: "Moved backwards",
+};
+
+/**
+ * SPEC v2 §6.9 — a marker is an observable act, not an opinion.
+ *
+ * These are warnings and none of them blocks a save. Every rule is a heuristic
+ * over free text: "lobbying for better welfare standards" trips the qualifier
+ * check on a word sitting in the object rather than the measurement, and no
+ * gerund test survives contact with real English. A check that blocks on a
+ * false positive gets switched off within a week; one that warns loudly and is
+ * counted in Coverage keeps its teeth without lying about what it knows.
+ */
+const BANNED_QUALIFIERS = [
+  "increasingly", "increased", "increase", "more", "better", "best",
+  "decreasing", "decreased", "improved", "improving", "enhanced",
+  "strengthened", "greater", "fewer", "less", "higher", "lower",
+  "effectively", "successfully", "appropriate", "adequate",
+  "significant", "significantly", "regularly", "properly",
+];
+
+export function markerWarnings(text) {
+  const t = String(text == null ? "" : text).trim();
+  const out = [];
+  if (!t) return out;
+
+  const words = t.split(/\s+/);
+  const first = words[0].toLowerCase().replace(/[^a-z]/g, "");
+
+  if (first && !first.endsWith("ing")) {
+    out.push({
+      code: "not-gerund",
+      message: 'Start with a gerund — "publishing", "convening", "reallocating". This starts with "' + words[0] + '".',
+    });
+  }
+
+  const found = BANNED_QUALIFIERS.filter((q) => new RegExp("\\b" + q + "\\b", "i").test(t));
+  if (found.length) {
+    out.push({
+      code: "qualifier",
+      message:
+        "Contains " + found.map((f) => '"' + f + '"').join(", ") +
+        ". Qualifiers make a marker unscoreable — the record captures whether it happened, so a comparative has nowhere to go.",
+    });
+  }
+
+  if (words.length > 6 && /\band\b|\bor\b/i.test(t)) {
+    out.push({
+      code: "two-acts",
+      message: "This may describe more than one act. One observable act per marker, or it cannot be scored cleanly.",
+    });
+  }
+
+  if (words.length > 20) {
+    out.push({ code: "long", message: "Long for a marker. Aim for one short observable act." });
+  }
+
+  return out;
+}
+
+export function makeMarker(projectId, stakeholderId, fields = {}) {
+  const at = fields.createdAt || nowISO();
+  return {
+    id: fields.id || newId(),
+    projectId,
+    stakeholderId,
+    text: String(fields.text || "").trim(),
+    tier: normalizeTier(fields.tier),
+    // SPEC 6.11 — watch only what you said you would watch.
+    watched: fields.watched === undefined ? true : Boolean(fields.watched),
+    retired: Boolean(fields.retired),
+    createdAt: at,
+    retiredAt: fields.retiredAt || null,
+  };
+}
+
+export function makeObservation(projectId, stakeholderId, markerId, cycleId, fields = {}) {
+  return {
+    id: fields.id || newId(),
+    projectId,
+    stakeholderId,
+    markerId,
+    cycleId: cycleId || null,
+    at: fields.at || nowISO(),
+    by: fields.by || "",
+    observed: OBSERVED_VALUES.includes(fields.observed) ? fields.observed : "not-yet",
+    narrative: String(fields.narrative || ""),
+    evidence: String(fields.evidence || ""),
+    contribution: String(fields.contribution || ""),
+    significance: String(fields.significance || ""),
+  };
+}
+
+export function makeCycle(projectId, fields = {}) {
+  return {
+    id: fields.id || newId(),
+    projectId,
+    label: String(fields.label || defaultCycleLabel()),
+    openedAt: fields.openedAt || nowISO(),
+    closedAt: fields.closedAt || null,
+    by: fields.by || "",
+    wentBackwards: String(fields.wentBackwards || ""),
+    matteredForGoal: String(fields.matteredForGoal || ""),
+    mapChangesProposed: String(fields.mapChangesProposed || ""),
+  };
+}
+
+export function defaultCycleLabel(d = new Date()) {
+  return "Q" + (Math.floor(d.getMonth() / 3) + 1) + " " + d.getFullYear();
+}
+
+/* --------------------------------------------------------- ladder readout */
+
+/** The most recent observation for each marker, keyed by marker id. */
+export function latestObservations(observations) {
+  const byMarker = new Map();
+  for (const o of observations || []) {
+    const prev = byMarker.get(o.markerId);
+    if (!prev || String(o.at) > String(prev.at)) byMarker.set(o.markerId, o);
+  }
+  return byMarker;
+}
+
+/**
+ * Ladder state for one stakeholder.
+ *
+ * SPEC 6.10 — the tiers are depth of change, not a timeline. Nothing here
+ * returns an ordering, a date sequence or a "next step", and nothing built on
+ * it may imply one.
+ */
+export function ladderState(markers, observations) {
+  const live = (markers || []).filter((m) => !m.retired);
+  const latest = latestObservations(observations);
+
+  const tiers = {};
+  for (const t of MARKER_TIERS) tiers[t] = { total: 0, observed: 0, backwards: 0 };
+  const untiered = { total: 0, observed: 0, backwards: 0 };
+
+  let weightTotal = 0;
+  let weightObserved = 0;
+  let regressionSeen = 0;
+  let anyObservation = false;
+
+  for (const m of live) {
+    const o = latest.get(m.id);
+    const bucket = m.tier ? tiers[m.tier] : untiered;
+    bucket.total++;
+    if (o) anyObservation = true;
+    if (o && o.observed === "yes") bucket.observed++;
+    if (o && o.observed === "backwards") bucket.backwards++;
+
+    if (m.tier === "regression") {
+      // A regression marker being SEEN is the bad outcome, so it counts toward
+      // regression rather than toward progress.
+      if (o && o.observed === "yes") regressionSeen++;
+      continue;
+    }
+    // Untiered markers (depth 2) weigh 1 — there is no ladder, so no depth.
+    const w = m.tier ? TIER_WEIGHT[m.tier] : 1;
+    weightTotal += w;
+    if (o && o.observed === "yes") weightObserved += w;
+    if (o && o.observed === "backwards") regressionSeen++;
+  }
+
+  return {
+    markers: live.length,
+    watched: live.filter((m) => m.watched).length,
+    tiers,
+    untiered,
+    regressionSeen,
+    anyObservation,
+    /** 0..1, weighted by depth of tier. Regression markers excluded. */
+    progress: weightTotal ? weightObserved / weightTotal : 0,
+    observedCount: MARKER_TIERS.reduce((n, t) => n + tiers[t].observed, 0) + untiered.observed,
+  };
+}
+
+/* --------------------------------------- SPEC 6.8 — the instrument itself */
+
+/** Enough evidence before the tool says anything at all. */
+export const INSTRUMENT_MIN_MARKERS = 3;
+/** How far the two readings may diverge before it is worth remarking on. */
+export const INSTRUMENT_GAP = 0.35;
+
+/**
+ * SPEC v2 §6.8 — judgement beside observation.
+ *
+ * Shift records what someone decided. Markers record what the actor was seen
+ * doing. Neither method holds both, so neither can notice when they disagree.
+ * This does exactly one thing: report that they do.
+ *
+ * `judged` is how far interest has travelled toward the top of the scale as a
+ * fraction of the room available from the baseline — so a move from +6 to +8
+ * counts for what it cost rather than for how small it looks.
+ *
+ * IT ESTABLISHES NOTHING ABOUT CAUSATION, and every caller must say so where it
+ * is displayed. Two readings disagreeing is a prompt to look, not a finding.
+ */
+export function judgedVsObserved(stakeholder, markers, observations) {
+  const ladder = ladderState(markers, observations);
+  const base = stakeholder.baseline || {};
+  const deltaInterest = Number(stakeholder.interest) - Number(base.interest);
+  const deltaPower = Number(stakeholder.power) - Number(base.power);
+
+  const room = INTEREST_MAX - Number(base.interest);
+  const judged = room > 0 ? Math.max(0, Math.min(1, deltaInterest / room)) : 0;
+
+  const result = {
+    ladder,
+    deltaInterest,
+    deltaPower,
+    judged,
+    observed: ladder.progress,
+    gap: judged - ladder.progress,
+    verdict: "insufficient",
+    message: "",
+  };
+
+  // Backsliding outranks everything. It is the thing OM practitioners almost
+  // never record and the thing this movement most needs to see (SPEC 6.13).
+  if (ladder.regressionSeen > 0) {
+    result.verdict = "regressing";
+    result.message =
+      ladder.regressionSeen === 1
+        ? "One behaviour has moved backwards. Whatever else the scores say, that is the thing to look at."
+        : ladder.regressionSeen + " behaviours have moved backwards. Whatever else the scores say, that is the thing to look at.";
+    return result;
+  }
+
+  if (ladder.markers < INSTRUMENT_MIN_MARKERS || !ladder.anyObservation) {
+    result.message =
+      ladder.markers < INSTRUMENT_MIN_MARKERS
+        ? "Add at least " + INSTRUMENT_MIN_MARKERS + " behaviours to compare the score against what has actually been seen."
+        : "No behaviour has been reviewed yet. Run a reflection cycle to compare the score against what has been seen.";
+    return result;
+  }
+
+  if (result.gap > INSTRUMENT_GAP) {
+    result.verdict = "ahead";
+    result.message =
+      "Your score has moved further than the behaviour has. Either the score is running ahead of the evidence, or there is evidence nobody has recorded.";
+  } else if (result.gap < -INSTRUMENT_GAP) {
+    result.verdict = "behind";
+    result.message =
+      "They are doing the things and the score has not caught up. Either the map is stale, or these behaviours matter less to the goal than the ladder assumes.";
+  } else {
+    result.verdict = "corroborated";
+    result.message =
+      "Judgement and observation agree. Two independent readings saying the same thing is the state worth reporting.";
+  }
+  return result;
+}

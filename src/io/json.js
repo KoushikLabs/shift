@@ -32,7 +32,15 @@ export const FORMAT_VERSION = 1;
 
 /* ----------------------------------------------------------------- export */
 
-export function buildExport({ project, stakeholders, changesFor, appVersion }) {
+export function buildExport({
+  project,
+  stakeholders,
+  changesFor,
+  markers = [],
+  observations = [],
+  cycles = [],
+  appVersion,
+}) {
   const byStakeholder = {};
   const allChanges = [];
   for (const s of stakeholders) {
@@ -53,6 +61,12 @@ export function buildExport({ project, stakeholders, changesFor, appVersion }) {
     project,
     stakeholders,
     changes: allChanges.sort((a, b) => String(a.at).localeCompare(String(b.at))),
+    // SPEC 10 — the export must be complete. A behaviour record that did not
+    // survive an export would make the ladder unmovable between machines and
+    // silently lose the only evidence that is not self-assessment.
+    markers,
+    observations: observations.slice().sort((a, b) => String(a.at).localeCompare(String(b.at))),
+    cycles,
     derived: { strategyPeriods: byStakeholder },
   };
 }
@@ -97,6 +111,7 @@ function readNativeExport(data) {
     name: str(data.project?.name) || "Imported map",
     description: str(data.project?.description),
     scaleNote: str(data.project?.scaleNote),
+    depth: data.project?.depth,
     createdAt: str(data.project?.createdAt) || nowISO(),
     updatedAt: str(data.project?.updatedAt) || nowISO(),
   });
@@ -109,7 +124,19 @@ function readNativeExport(data) {
     .filter((c) => c && known.has(c.stakeholderId));
 
   if (!stakeholders.length) throw new ImportError("That export contains no stakeholders.");
-  return { project, stakeholders, changes, source: "shift" };
+
+  const markers = (Array.isArray(data.markers) ? data.markers : [])
+    .map((raw) => coerceMarker(raw, project.id))
+    .filter((m) => m && known.has(m.stakeholderId));
+  const knownMarkers = new Set(markers.map((m) => m.id));
+  const cycles = (Array.isArray(data.cycles) ? data.cycles : [])
+    .map((raw) => coerceCycle(raw, project.id))
+    .filter(Boolean);
+  const observations = (Array.isArray(data.observations) ? data.observations : [])
+    .map((raw) => coerceObservation(raw, project.id))
+    .filter((o) => o && knownMarkers.has(o.markerId));
+
+  return { project, stakeholders, changes, markers, observations, cycles, source: "shift" };
 }
 
 /**
@@ -178,7 +205,8 @@ function readSkillExport(data) {
   }
 
   if (!stakeholders.length) throw new ImportError("That skill export contains no stakeholders.");
-  return { project, stakeholders, changes, source: "stakeholder-matrix" };
+  // The skill has no behaviour layer, so a map imported from it starts at depth 1.
+  return { project, stakeholders, changes, markers: [], observations: [], cycles: [], source: "stakeholder-matrix" };
 }
 
 /**
@@ -226,6 +254,8 @@ function coerceStakeholder(raw, projectId, i) {
     name,
     type: str(raw.type),
     isIndividual: Boolean(raw.isIndividual),
+    reach: raw.reach,
+    reachableVia: Array.isArray(raw.reachableVia) ? raw.reachableVia.map(str).filter(Boolean) : [],
     power,
     interest,
     rationale,
@@ -266,6 +296,61 @@ function coerceChange(raw, projectId) {
   };
 }
 
+function coerceMarker(raw, projectId) {
+  if (!raw || typeof raw !== "object") return null;
+  const stakeholderId = str(raw.stakeholderId);
+  const text = str(raw.text).trim();
+  if (!stakeholderId || !text) return null;
+  return {
+    id: str(raw.id) || newId(),
+    projectId,
+    stakeholderId,
+    text,
+    tier: VALID_TIERS.has(str(raw.tier)) ? str(raw.tier) : null,
+    watched: raw.watched === undefined ? true : Boolean(raw.watched),
+    retired: Boolean(raw.retired),
+    createdAt: str(raw.createdAt) || nowISO(),
+    retiredAt: str(raw.retiredAt) || null,
+  };
+}
+
+function coerceObservation(raw, projectId) {
+  if (!raw || typeof raw !== "object") return null;
+  const markerId = str(raw.markerId);
+  if (!markerId) return null;
+  return {
+    id: str(raw.id) || newId(),
+    projectId,
+    stakeholderId: str(raw.stakeholderId),
+    markerId,
+    cycleId: str(raw.cycleId) || null,
+    at: str(raw.at) || nowISO(),
+    by: str(raw.by),
+    observed: VALID_OBSERVED.has(str(raw.observed)) ? str(raw.observed) : "not-yet",
+    narrative: str(raw.narrative),
+    evidence: str(raw.evidence),
+    contribution: str(raw.contribution),
+    significance: str(raw.significance),
+  };
+}
+
+function coerceCycle(raw, projectId) {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    id: str(raw.id) || newId(),
+    projectId,
+    label: str(raw.label),
+    openedAt: str(raw.openedAt) || nowISO(),
+    closedAt: str(raw.closedAt) || null,
+    by: str(raw.by),
+    wentBackwards: str(raw.wentBackwards),
+    matteredForGoal: str(raw.matteredForGoal),
+    mapChangesProposed: str(raw.mapChangesProposed),
+  };
+}
+
+const VALID_TIERS = new Set(["start", "like", "love", "regression"]);
+const VALID_OBSERVED = new Set(["yes", "not-yet", "backwards"]);
 const VALID_CHANGED = new Set(["power", "interest", "rationale", "strategy"]);
 function normalizeChangedFields(v) {
   if (!Array.isArray(v)) return [];
@@ -290,12 +375,17 @@ const num = (v, fallback) => {
  * so history still points at the right actor; SPEC 5's "never reused" holds
  * because the copy's ids are new, not recycled.
  */
-export function applyImportMode({ project, stakeholders, changes }, mode) {
-  if (mode !== "copy") return { project, stakeholders, changes };
+export function applyImportMode({ project, stakeholders, changes, markers = [], observations = [], cycles = [] }, mode) {
+  if (mode !== "copy") return { project, stakeholders, changes, markers, observations, cycles };
 
   const projectId = newId();
   const idMap = new Map();
   for (const s of stakeholders) idMap.set(s.id, newId());
+
+  const markerMap = new Map();
+  for (const m of markers) markerMap.set(m.id, newId());
+  const cycleMap = new Map();
+  for (const c of cycles) cycleMap.set(c.id, newId());
 
   return {
     project: { ...project, id: projectId, name: dedupeName(project.name), createdAt: nowISO(), updatedAt: nowISO() },
@@ -306,6 +396,21 @@ export function applyImportMode({ project, stakeholders, changes }, mode) {
       projectId,
       stakeholderId: idMap.get(c.stakeholderId) || c.stakeholderId,
     })),
+    markers: markers.map((m) => ({
+      ...m,
+      id: markerMap.get(m.id),
+      projectId,
+      stakeholderId: idMap.get(m.stakeholderId) || m.stakeholderId,
+    })),
+    observations: observations.map((o) => ({
+      ...o,
+      id: newId(),
+      projectId,
+      stakeholderId: idMap.get(o.stakeholderId) || o.stakeholderId,
+      markerId: markerMap.get(o.markerId) || o.markerId,
+      cycleId: o.cycleId ? cycleMap.get(o.cycleId) || null : null,
+    })),
+    cycles: cycles.map((c) => ({ ...c, id: cycleMap.get(c.id), projectId })),
   };
 }
 
@@ -318,6 +423,8 @@ function dedupeName(name) {
 /** A short human description of what an import will do, shown before it runs. */
 export function describeImport(parsed) {
   const changes = parsed.changes.length;
+  const markers = (parsed.markers || []).length;
+  const observations = (parsed.observations || []).length;
   const withStrategy = parsed.stakeholders.filter((s) =>
     STRATEGY_FIELDS.some((k) => (normalizeStrategy(s.strategy)[k] || "").trim())
   ).length;
@@ -325,6 +432,8 @@ export function describeImport(parsed) {
     projectName: parsed.project.name,
     stakeholders: parsed.stakeholders.length,
     changes,
+    markers,
+    observations,
     withStrategy,
     source: parsed.source,
     earliest: changes ? parsed.changes.map((c) => c.at).sort()[0] : null,

@@ -23,7 +23,20 @@
 
 import { explainError, supabase } from "../supabaseClient.js";
 import { session } from "../auth.js";
-import { changeToRow, projectToRow, rowToChange, rowToProject, rowToStakeholder, stakeholderToRow } from "./rows.js";
+import {
+  changeToRow,
+  cycleToRow,
+  markerToRow,
+  observationToRow,
+  projectToRow,
+  rowToChange,
+  rowToCycle,
+  rowToMarker,
+  rowToObservation,
+  rowToProject,
+  rowToStakeholder,
+  stakeholderToRow,
+} from "./rows.js";
 
 export class CloudError extends Error {
   constructor(message, cause) {
@@ -86,11 +99,23 @@ export async function loadProject(projectId) {
     if (!batch || batch.length < PAGE) break;
   }
 
+  const [mk, ob, cy] = await Promise.all([
+    db.from("markers").select("*").eq("project_id", projectId).order("created_at", { ascending: true }),
+    db.from("observations").select("*").eq("project_id", projectId).order("at", { ascending: true }),
+    db.from("cycles").select("*").eq("project_id", projectId).order("opened_at", { ascending: false }),
+  ]);
+  // A missing behaviour layer is not a reason to refuse to open the map: a
+  // project at depth 1 has none, and an older database may not have the tables.
+  if (mk.error && mk.error.code !== "42P01") fail(mk.error, "Could not load the behaviours");
+
   void org;
   return {
     project: rowToProject(p),
     stakeholders: (sh || []).map(rowToStakeholder),
     changes: changes.map(rowToChange),
+    markers: (mk.data || []).map(rowToMarker),
+    observations: (ob.data || []).map(rowToObservation),
+    cycles: (cy.data || []).map(rowToCycle),
   };
 }
 
@@ -166,7 +191,7 @@ async function touch(project) {
 
 /* ------------------------------------------------------------------ import */
 
-export async function importProject({ project, stakeholders, changes }) {
+export async function importProject({ project, stakeholders, changes, markers = [], observations = [], cycles = [] }) {
   const org = orgId();
   const db = supabase();
   const user = session.user || {};
@@ -198,7 +223,83 @@ export async function importProject({ project, stakeholders, changes }) {
       }
     }
   }
+  if (cycles.length) {
+    const { error } = await db.from("cycles").upsert(cycles.map((c) => cycleToRow(c, org, user.id, user.email)));
+    if (error) throw new CloudError("The map imported but its review history did not. Keep your JSON file.", error);
+  }
+  if (markers.length) {
+    const { error } = await db.from("markers").upsert(markers.map((m) => markerToRow(m, org)));
+    if (error) throw new CloudError("The map imported but its behaviours did not. Keep your JSON file.", error);
+  }
+  if (observations.length) {
+    const CHUNK = 500;
+    for (let i = 0; i < observations.length; i += CHUNK) {
+      const slice = observations.slice(i, i + CHUNK).map((o) => observationToRow(o, org, user.id, user.email));
+      const { error } = await db.from("observations").insert(slice);
+      if (error) throw new CloudError("The map imported but part of its observations did not. Keep your JSON file.", error);
+    }
+  }
+
   return project.id;
+}
+
+/* ------------------------------------------ markers, observations, cycles */
+
+export async function putMarker(marker, projectTouch) {
+  const { error } = await supabase().from("markers").upsert(markerToRow(marker, orgId()));
+  if (error) fail(error, "Could not save the behaviour");
+  if (projectTouch) await touch(projectTouch);
+  return marker;
+}
+
+export async function putMarkers(markers, projectTouch) {
+  const org = orgId();
+  const { error } = await supabase().from("markers").upsert(markers.map((m) => markerToRow(m, org)));
+  if (error) fail(error, "Could not save the behaviours");
+  if (projectTouch) await touch(projectTouch);
+  return markers.length;
+}
+
+export async function deleteMarker(markerId) {
+  const { error } = await supabase().from("markers").delete().eq("id", markerId);
+  if (error) fail(error, "Could not remove the behaviour");
+}
+
+/**
+ * One reflection cycle. Observations go in FIRST, for the same reason
+ * commitChange writes history before scores: if the second write fails, the
+ * findings survive and only the cycle summary is missing, which is recoverable.
+ * The reverse would record that a review happened and lose what it found.
+ */
+export async function commitCycle(cycle, observations, projectTouch) {
+  const org = orgId();
+  const db = supabase();
+  const user = session.user || {};
+
+  if (observations.length) {
+    const rows = observations.map((o) => observationToRow(o, org, user.id, user.email));
+    const { error } = await db.from("observations").insert(rows);
+    if (error) fail(error, "Could not record the review");
+  }
+
+  const { error: ce } = await db.from("cycles").upsert(cycleToRow(cycle, org, user.id, user.email));
+  if (ce) {
+    throw new CloudError(
+      "The observations were recorded, but the review summary failed to save (" +
+        explainError(ce, "unknown error") +
+        "). Reload the page - nothing has been lost.",
+      ce
+    );
+  }
+
+  if (projectTouch) await touch(projectTouch);
+  return { cycle, observations };
+}
+
+export async function putCycle(cycle) {
+  const user = session.user || {};
+  const { error } = await supabase().from("cycles").upsert(cycleToRow(cycle, orgId(), user.id, user.email));
+  if (error) fail(error, "Could not save the review");
 }
 
 /* -------------------------------------------------------------------- meta */

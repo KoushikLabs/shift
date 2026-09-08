@@ -15,10 +15,20 @@
  *   never reviewed         a strategy set once and never revisited
  */
 
-import { coverage, hasStrategy, movementOf, normalizeStrategy } from "../domain.js";
+import {
+  boundaryPartners,
+  BOUNDARY_PARTNER_CEILING,
+  coverage,
+  DEPTH_WATCH,
+  hasStrategy,
+  latestObservations,
+  markerWarnings,
+  movementOf,
+  normalizeStrategy,
+} from "../domain.js";
 import { esc, fmtAgo, plural } from "./dom.js";
 
-export function renderCoverage(host, stakeholders, changesFor, onSelect) {
+export function renderCoverage(host, stakeholders, changesFor, onSelect, behaviour = null) {
   if (!stakeholders.length) {
     host.innerHTML = `<h2>Coverage</h2><p class="empty">No stakeholders yet.</p>`;
     return;
@@ -103,6 +113,92 @@ export function renderCoverage(host, stakeholders, changesFor, onSelect) {
       list: neverTouched,
     }),
   ];
+
+  // SPEC v2 §7 — the behaviour-layer gaps, once the map is at depth 2 or more.
+  if (behaviour && behaviour.depth >= DEPTH_WATCH) {
+    const partners = boundaryPartners(stakeholders);
+    const noMarkers = partners.filter((s) => !behaviour.markersFor(s.id).filter((m) => !m.retired).length);
+    const noneWatched = stakeholders.filter((s) => {
+      const live = behaviour.markersFor(s.id).filter((m) => !m.retired);
+      return live.length > 0 && live.every((m) => !m.watched);
+    });
+    const neverReviewed = stakeholders.filter((s) => {
+      const live = behaviour.markersFor(s.id).filter((m) => !m.retired);
+      if (!live.length) return false;
+      return !behaviour.observationsForStakeholder(s.id).length;
+    });
+    const badForm = stakeholders.filter((s) =>
+      behaviour.markersFor(s.id).some((m) => !m.retired && markerWarnings(m.text).length)
+    );
+    const noRegression = partners.filter((s) => {
+      const live = behaviour.markersFor(s.id).filter((m) => !m.retired);
+      return live.length > 0 && !live.some((m) => m.tier === "regression");
+    });
+    const backwards = stakeholders.filter((s) => {
+      const latest = latestObservations(behaviour.observationsForStakeholder(s.id));
+      return [...latest.values()].some((o) => o.observed === "backwards");
+    });
+    const tooManyPartners = partners.length > BOUNDARY_PARTNER_CEILING ? partners : [];
+
+    cards.unshift(
+      card({
+        tone: backwards.length ? "bad" : "ok",
+        count: backwards.length,
+        title: "Moved backwards",
+        body: "A behaviour that was going the right way and stopped, or reversed. Standard Outcome Mapping has no vocabulary for this and practitioners almost never record it — where it is recorded, it is the first thing to look at.",
+        list: backwards,
+      }),
+      card({
+        tone: noMarkers.length ? "bad" : "ok",
+        count: noMarkers.length,
+        title: "Boundary partners with no behaviours",
+        body: "An actor you work with directly, with nothing observable written down. The score is then the only thing vouching for itself.",
+        list: noMarkers,
+      }),
+      card({
+        tone: neverReviewed.length ? "warn" : "ok",
+        count: neverReviewed.length,
+        title: "Behaviours never reviewed",
+        body: "Written once and never looked at again. A ladder nobody walks is the documented way this practice quietly dies.",
+        list: neverReviewed,
+      }),
+      card({
+        tone: noneWatched.length ? "warn" : "ok",
+        count: noneWatched.length,
+        title: "Nothing being watched",
+        body: "Every behaviour for this actor is switched off, so the next review will skip them entirely.",
+        list: noneWatched,
+      }),
+      card({
+        tone: badForm.length ? "warn" : "ok",
+        count: badForm.length,
+        title: "Behaviours that will not score cleanly",
+        body: "Not a gerund, carrying a qualifier, or bundling two acts. Would two people reading it years apart score it the same way?",
+        list: badForm,
+      })
+    );
+
+    if (behaviour.depth >= 3) {
+      cards.splice(
+        5,
+        0,
+        card({
+          tone: noRegression.length ? "warn" : "ok",
+          count: noRegression.length,
+          title: "No backsliding rung",
+          body: "A ladder with nothing on the “hope not to see” rung. In a movement with eighteen withdrawn chicken commitments, that is a gap rather than a clean bill of health.",
+          list: noRegression,
+        }),
+        card({
+          tone: tooManyPartners.length ? "warn" : "ok",
+          count: tooManyPartners.length,
+          title: "Boundary partners above seven",
+          body: "Strategy maps become unworkable and the monitoring load stops being sustainable. Consolidate similar actors into groups rather than dropping them.",
+          list: tooManyPartners,
+        })
+      );
+    }
+  }
 
   const done = cov.total - cov.noStrategy.length;
   host.innerHTML =

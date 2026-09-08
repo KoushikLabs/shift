@@ -8,7 +8,17 @@ import {
   toCsv,
 } from "../src/io/csv.js";
 import { buildExport, parseImport, applyImportMode, describeImport, ImportError } from "../src/io/json.js";
-import { makeProject, makeStakeholder, stanceLabel, stanceOf, normalizeStrategy, newId } from "../src/domain.js";
+import {
+  makeProject,
+  makeStakeholder,
+  makeMarker,
+  makeObservation,
+  makeCycle,
+  stanceLabel,
+  stanceOf,
+  normalizeStrategy,
+  newId,
+} from "../src/domain.js";
 
 /* ------------------------------------------------------------------- CSV in */
 
@@ -369,5 +379,138 @@ describe("import collision handling", () => {
     const once = applyImportMode(parsed, "copy");
     const twice = applyImportMode(once, "copy");
     expect(twice.project.name).toBe("Test map (copy)");
+  });
+});
+
+/* ------------------------------------ SPEC 10: the behaviour layer exports */
+
+function behaviourFixture() {
+  const project = makeProject({ name: "Field building", depth: 3 });
+  const s = makeStakeholder(project.id, {
+    name: "Funded principal investigators",
+    power: 4,
+    interest: 0,
+    rationale: "No contact yet - assumed neutral.",
+    reach: "partner",
+  });
+  const ministry = makeStakeholder(project.id, {
+    name: "Ministry of Agriculture",
+    power: 10,
+    interest: -1,
+    rationale: "Cannot get a meeting.",
+    reach: "out-of-reach",
+  });
+  ministry.reachableVia = [s.id];
+
+  const markers = [
+    makeMarker(project.id, s.id, { text: "attending a convening and presenting work", tier: "start" }),
+    makeMarker(project.id, s.id, { text: "publishing in a mainstream disciplinary journal", tier: "like" }),
+    makeMarker(project.id, s.id, { text: "publishing once and leaving the field", tier: "regression", watched: false }),
+  ];
+  const cycle = makeCycle(project.id, {
+    label: "Q1 2026",
+    wentBackwards: "Nothing.",
+    matteredForGoal: "The convening is the bottleneck.",
+    mapChangesProposed: "Retire nothing yet.",
+  });
+  const observations = [
+    makeObservation(project.id, s.id, markers[0].id, cycle.id, {
+      observed: "yes",
+      narrative: "Presented at the March convening.",
+      evidence: "Convening notes, 14 March.",
+      contribution: "We funded the travel.",
+      significance: "Moderate.",
+      at: "2026-03-20T00:00:00.000Z",
+    }),
+  ];
+
+  s.interest = 6;
+  return { project, stakeholders: [s, ministry], changes: [], markers, observations, cycles: [cycle] };
+}
+
+describe("behaviour layer export and import", () => {
+  it("carries markers, observations and cycles through a round trip", () => {
+    const f = behaviourFixture();
+    const dump = buildExport({
+      project: f.project,
+      stakeholders: f.stakeholders,
+      changesFor: () => [],
+      markers: f.markers,
+      observations: f.observations,
+      cycles: f.cycles,
+    });
+    expect(dump.markers).toHaveLength(3);
+    expect(dump.observations).toHaveLength(1);
+    expect(dump.cycles).toHaveLength(1);
+
+    const back = parseImport(JSON.stringify(dump));
+    expect(back.markers).toHaveLength(3);
+    expect(back.observations).toHaveLength(1);
+    expect(back.cycles).toHaveLength(1);
+
+    const obs = back.observations[0];
+    expect(obs.observed).toBe("yes");
+    expect(obs.evidence).toBe("Convening notes, 14 March.");
+    expect(obs.significance).toBe("Moderate.");
+    expect(obs.markerId).toBe(f.markers[0].id);
+
+    const regression = back.markers.find((m) => m.tier === "regression");
+    expect(regression.watched).toBe(false);
+    expect(back.cycles[0].matteredForGoal).toBe("The convening is the bottleneck.");
+  });
+
+  it("carries depth and the actor triage through a round trip", () => {
+    const f = behaviourFixture();
+    const back = parseImport(
+      JSON.stringify(buildExport({ project: f.project, stakeholders: f.stakeholders, changesFor: () => [], ...f }))
+    );
+    expect(back.project.depth).toBe(3);
+    const ministry = back.stakeholders.find((s) => s.name.startsWith("Ministry"));
+    expect(ministry.reach).toBe("out-of-reach");
+    expect(ministry.reachableVia).toHaveLength(1);
+    const pis = back.stakeholders.find((s) => s.name.startsWith("Funded"));
+    expect(pis.reach).toBe("partner");
+  });
+
+  it("drops an observation whose marker is not in the file", () => {
+    const f = behaviourFixture();
+    const dump = buildExport({ project: f.project, stakeholders: f.stakeholders, changesFor: () => [], ...f });
+    dump.observations.push({ ...dump.observations[0], id: "orphan", markerId: "does-not-exist" });
+    expect(parseImport(JSON.stringify(dump)).observations).toHaveLength(1);
+  });
+
+  it("still reads a depth-1 export that has no behaviour layer at all", () => {
+    const project = makeProject({ name: "Plain map" });
+    const s = makeStakeholder(project.id, { name: "Board", power: 5, interest: 0 });
+    const back = parseImport(
+      JSON.stringify(buildExport({ project, stakeholders: [s], changesFor: () => [] }))
+    );
+    expect(back.markers).toEqual([]);
+    expect(back.observations).toEqual([]);
+    expect(back.project.depth).toBe(1);
+  });
+
+  it("re-keys the behaviour layer consistently when importing as a copy", () => {
+    const f = behaviourFixture();
+    const parsed = parseImport(
+      JSON.stringify(buildExport({ project: f.project, stakeholders: f.stakeholders, changesFor: () => [], ...f }))
+    );
+    const copy = applyImportMode(parsed, "copy");
+
+    expect(copy.markers.every((m) => m.projectId === copy.project.id)).toBe(true);
+    // the observation must still point at the copied marker, not the original
+    expect(copy.observations[0].markerId).toBe(copy.markers[0].id);
+    expect(copy.observations[0].cycleId).toBe(copy.cycles[0].id);
+    const oldIds = new Set([...parsed.markers.map((m) => m.id), ...parsed.cycles.map((c) => c.id)]);
+    for (const m of copy.markers) expect(oldIds.has(m.id)).toBe(false);
+  });
+
+  it("reports the behaviour layer in the import summary", () => {
+    const f = behaviourFixture();
+    const info = describeImport(
+      parseImport(JSON.stringify(buildExport({ project: f.project, stakeholders: f.stakeholders, changesFor: () => [], ...f })))
+    );
+    expect(info.markers).toBe(3);
+    expect(info.observations).toBe(1);
   });
 });

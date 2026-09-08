@@ -6,8 +6,28 @@
  * — visible on the dashboard, not buried").
  */
 
-import { coverage, hasStrategy, movementOf, stanceCounts, stanceLabel, stanceOf, stanceVar } from "../domain.js";
+import {
+  boundaryPartners,
+  BOUNDARY_PARTNER_CEILING,
+  coverage,
+  hasStrategy,
+  movementOf,
+  reachLabel,
+  stanceCounts,
+  stanceLabel,
+  stanceOf,
+  stanceVar,
+} from "../domain.js";
 import { esc, signed, truncate } from "./dom.js";
+
+/** SPEC v2 §7 — Outcome Mapping breaks down above seven boundary partners. */
+export function boundaryPartnerWarning(stakeholders) {
+  const bps = boundaryPartners(stakeholders);
+  if (bps.length <= BOUNDARY_PARTNER_CEILING) return "";
+  return `<div class="warnstrip"><strong>${bps.length} boundary partners.</strong> Outcome Mapping breaks down above
+    ${BOUNDARY_PARTNER_CEILING} — strategy maps become unworkable and the monitoring load stops being sustainable.
+    Consider consolidating similar actors into groups rather than dropping them, and record what you cut and why.</div>`;
+}
 
 export function renderTiles(host, stakeholders, onJump) {
   const c = stanceCounts(stakeholders);
@@ -70,7 +90,11 @@ export function renderTable(host, stakeholders, opts) {
           const obj = (d.strategy.objective || "").trim();
           const firstStrategyBit = obj || Object.values(d.strategy).find((v) => v.trim()) || "";
           return `<tr class="${selectedId === d.id ? "sel" : ""}" data-id="${esc(d.id)}" tabindex="0">
-            <td class="name"><i class="stance" style="background:${stanceVar(st)}"></i>${esc(d.name)}${d.isIndividual ? '<span class="person" title="Named individual — personal data">person</span>' : ""}</td>
+            <td class="name"><i class="stance" style="background:${stanceVar(st)}"></i>${esc(d.name)}${
+              d.isIndividual ? '<span class="person" title="Named individual — personal data">person</span>' : ""
+            }<span class="reach ${d.reach === "target" ? "pt" : d.reach === "out-of-reach" ? "oor" : "bp"}" title="${esc(reachLabel(d.reach))}">${esc(
+              d.reach === "target" ? "target" : d.reach === "out-of-reach" ? "out of reach" : "partner"
+            )}</span></td>
             <td class="typ">${esc(d.type || "")}</td>
             <td class="num">${d.power}</td><td>${delta(m.deltaPower)}</td>
             <td class="num">${signed(d.interest)}</td><td>${delta(m.deltaInterest)}</td>

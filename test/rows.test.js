@@ -7,9 +7,23 @@ import {
   rowToStakeholder,
   changeToRow,
   rowToChange,
+  markerToRow,
+  rowToMarker,
+  observationToRow,
+  rowToObservation,
+  cycleToRow,
+  rowToCycle,
   ensureUuids,
 } from "../src/backends/rows.js";
-import { makeProject, makeStakeholder, newId, normalizeStrategy } from "../src/domain.js";
+import {
+  makeProject,
+  makeStakeholder,
+  makeMarker,
+  makeObservation,
+  makeCycle,
+  newId,
+  normalizeStrategy,
+} from "../src/domain.js";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -32,6 +46,7 @@ describe("project mapping", () => {
       name: "Poultry standards",
       description: "d",
       scaleNote: "s",
+      depth: 1,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     });
@@ -42,6 +57,36 @@ describe("project mapping", () => {
     expect(row.scale_note).toBe("Power over adoption");
     expect(row.org_id).toBe(ORG);
     expect(rowToProject(row).scaleNote).toBe("Power over adoption");
+  });
+});
+
+describe("depth on the project row", () => {
+  it("round-trips the depth and defaults to Map", () => {
+    expect(projectToRow(makeProject({ name: "x", depth: 3 }), ORG).depth).toBe(3);
+    expect(rowToProject({ id: "x", name: "x", depth: 2 }).depth).toBe(2);
+    expect(rowToProject({ id: "x", name: "x" }).depth).toBe(1);
+    expect(rowToProject({ id: "x", name: "x", depth: 99 }).depth).toBe(1);
+  });
+});
+
+describe("triage on the stakeholder row", () => {
+  it("round-trips reach and reachableVia", () => {
+    const s = makeStakeholder("p", { name: "Ministry", reach: "out-of-reach" });
+    s.reachableVia = ["a", "b"];
+    const row = stakeholderToRow(s, ORG);
+    expect(row.reach).toBe("out-of-reach");
+    expect(row.reachable_via).toEqual(["a", "b"]);
+    const back = rowToStakeholder(row);
+    expect(back.reach).toBe("out-of-reach");
+    expect(back.reachableVia).toEqual(["a", "b"]);
+  });
+
+  it("defaults a row with no reach to partner rather than dropping the field", () => {
+    const back = rowToStakeholder({
+      id: "x", project_id: "p", name: "n", power: 5, interest: 0, strategy: {}, baseline: {},
+    });
+    expect(back.reach).toBe("partner");
+    expect(back.reachableVia).toEqual([]);
   });
 });
 
@@ -239,5 +284,129 @@ describe("ensureUuids — migrating a local map to Postgres", () => {
     });
     expect(out.changes).toHaveLength(0);
     expect(out.stakeholders).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------- markers, observations and cycles */
+
+describe("marker mapping", () => {
+  it("round-trips every field", () => {
+    const m = makeMarker("proj", "stake", { text: "publishing a dated timeline", tier: "like", watched: false });
+    const back = rowToMarker(markerToRow(m, ORG));
+    expect(back.text).toBe("publishing a dated timeline");
+    expect(back.tier).toBe("like");
+    expect(back.watched).toBe(false);
+    expect(back.retired).toBe(false);
+    expect(back.stakeholderId).toBe("stake");
+    expect(markerToRow(m, ORG).org_id).toBe(ORG);
+  });
+
+  it("carries an untiered depth-2 marker through as null, not as a string", () => {
+    const m = makeMarker("proj", "stake", { text: "publishing a timeline" });
+    expect(markerToRow(m, ORG).tier).toBe(null);
+    expect(rowToMarker(markerToRow(m, ORG)).tier).toBe(null);
+  });
+
+  it("rejects an unknown tier from the database", () => {
+    expect(rowToMarker({ id: "x", project_id: "p", stakeholder_id: "s", text: "t", tier: "nonsense" }).tier).toBe(null);
+  });
+});
+
+describe("observation mapping", () => {
+  const o = makeObservation("proj", "stake", "marker", "cycle", {
+    observed: "yes",
+    narrative: "Two PIs said they have students interested.",
+    evidence: "Convening notes, 14 March.",
+    contribution: "We raised studentships as an agenda item.",
+    significance: "Moderate - this is the bottleneck rung.",
+  });
+
+  it("round-trips the whole journal entry", () => {
+    const back = rowToObservation(observationToRow(o, ORG, USER, "p@e.org"));
+    expect(back.observed).toBe("yes");
+    expect(back.narrative).toMatch(/students interested/);
+    expect(back.evidence).toMatch(/14 March/);
+    expect(back.contribution).toMatch(/agenda item/);
+    expect(back.significance).toMatch(/bottleneck/);
+    expect(back.markerId).toBe("marker");
+    expect(back.cycleId).toBe("cycle");
+  });
+
+  it("stamps attribution from the session, not the payload", () => {
+    const row = observationToRow({ ...o, by: "someone-else@example.org" }, ORG, USER, "p@e.org");
+    expect(row.by).toBe(USER);
+    expect(row.by_email).toBe("p@e.org");
+  });
+
+  it("never lets an unknown observed value through in either direction", () => {
+    expect(observationToRow({ ...o, observed: "probably" }, ORG, USER, "e").observed).toBe("not-yet");
+    expect(rowToObservation({ id: "x", observed: "probably" }).observed).toBe("not-yet");
+  });
+
+  it("keeps significance, which is the whole answer to the so-what gap", () => {
+    for (const k of ["narrative", "evidence", "contribution", "significance"]) {
+      expect(observationToRow(o, ORG, USER, "e"), k).toHaveProperty(k);
+    }
+  });
+});
+
+describe("cycle mapping", () => {
+  it("round-trips the three closing questions", () => {
+    const c = makeCycle("proj", {
+      label: "Q1 2026",
+      wentBackwards: "One supplier withdrew from its timeline.",
+      matteredForGoal: "Markers ticked but the ministry has not moved.",
+      mapChangesProposed: "Retire the auditing marker; nobody can observe it.",
+    });
+    const back = rowToCycle(cycleToRow(c, ORG, USER, "p@e.org"));
+    expect(back.label).toBe("Q1 2026");
+    expect(back.wentBackwards).toMatch(/withdrew/);
+    expect(back.matteredForGoal).toMatch(/has not moved/);
+    expect(back.mapChangesProposed).toMatch(/Retire the auditing marker/);
+    expect(back.closedAt).toBe(null);
+  });
+});
+
+describe("ensureUuids with the behaviour layer", () => {
+  it("re-keys markers, observations and cycles while keeping every link", () => {
+    const out = ensureUuids({
+      project: { id: "id-p", name: "m" },
+      stakeholders: [{ id: "id-s", projectId: "id-p", name: "a" }],
+      changes: [],
+      markers: [{ id: "id-m", projectId: "id-p", stakeholderId: "id-s", text: "publishing" }],
+      observations: [
+        { id: "id-o", projectId: "id-p", stakeholderId: "id-s", markerId: "id-m", cycleId: "id-c", observed: "yes" },
+      ],
+      cycles: [{ id: "id-c", projectId: "id-p", label: "Q1" }],
+    });
+    expect(out.markers[0].stakeholderId).toBe(out.stakeholders[0].id);
+    expect(out.observations[0].markerId).toBe(out.markers[0].id);
+    expect(out.observations[0].cycleId).toBe(out.cycles[0].id);
+    expect(out.observations[0].projectId).toBe(out.project.id);
+    expect(out.remapped).toBeGreaterThan(0);
+  });
+
+  it("drops an observation whose marker is gone rather than failing the whole migration", () => {
+    const out = ensureUuids({
+      project: { id: "id-p", name: "m" },
+      stakeholders: [{ id: "id-s", projectId: "id-p", name: "a" }],
+      changes: [],
+      markers: [],
+      observations: [{ id: "id-o", projectId: "id-p", stakeholderId: "id-s", markerId: "id-missing" }],
+      cycles: [],
+    });
+    expect(out.observations).toHaveLength(0);
+    expect(out.stakeholders).toHaveLength(1);
+  });
+
+  it("still works for a depth-1 map with no behaviour layer at all", () => {
+    const out = ensureUuids({
+      project: { id: "id-p", name: "m" },
+      stakeholders: [{ id: "id-s", projectId: "id-p", name: "a" }],
+      changes: [],
+    });
+    expect(out.markers).toEqual([]);
+    expect(out.observations).toEqual([]);
+    expect(out.cycles).toEqual([]);
   });
 });

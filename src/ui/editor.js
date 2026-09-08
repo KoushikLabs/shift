@@ -38,6 +38,8 @@ import {
   strategyPeriods,
 } from "../domain.js";
 import { esc, fmtDate, fmtDateTime, signed } from "./dom.js";
+import { DEPTH_WATCH, reachLabel } from "../domain.js";
+import { renderMarkers } from "./behaviour.js";
 
 /**
  * @param {HTMLElement} host
@@ -60,6 +62,7 @@ export function renderEditor(host, ctx) {
       <div>
         <h3>${esc(d.name)}${d.isIndividual ? '<span class="person" title="Named individual">person</span>' : ""}</h3>
         <div class="emeta">${esc(d.type || "no type")} ·
+          <span class="reach ${d.reach === "target" ? "pt" : d.reach === "out-of-reach" ? "oor" : "bp"}">${esc(reachLabel(d.reach))}</span> ·
           <span style="color:${stanceVar(st)};font-weight:700">${stanceLabel(st)}</span>
           · started at power ${b.power}, interest ${signed(b.interest)}
           ${d.updatedAt ? " · last changed " + fmtDate(d.updatedAt) : " · never changed"}</div>
@@ -73,6 +76,15 @@ export function renderEditor(host, ctx) {
     <div class="tabs" role="tablist">
       <button data-tab="score" role="tab" aria-selected="${tab === "score"}" class="${tab === "score" ? "on" : ""}">Scores &amp; reasoning</button>
       <button data-tab="strategy" role="tab" aria-selected="${tab === "strategy"}" class="${tab === "strategy" ? "on" : ""}">Engagement strategy${strategyMissing ? ' <span class="dot-warn" title="No strategy set">•</span>' : ""}</button>
+      ${
+        ctx.depth >= DEPTH_WATCH
+          ? `<button data-tab="behaviour" role="tab" aria-selected="${tab === "behaviour"}" class="${tab === "behaviour" ? "on" : ""}">Behaviour${
+              ctx.markers && ctx.markers.filter((m) => !m.retired).length
+                ? ` <span class="count">${ctx.markers.filter((m) => !m.retired).length}</span>`
+                : ""
+            }</button>`
+          : ""
+      }
       <button data-tab="effect" role="tab" aria-selected="${tab === "effect"}" class="${tab === "effect" ? "on" : ""}">Strategy &amp; effect</button>
       <button data-tab="hist" role="tab" aria-selected="${tab === "hist"}" class="${tab === "hist" ? "on" : ""}">Full history</button>
     </div>
@@ -90,6 +102,16 @@ export function renderEditor(host, ctx) {
           <div class="scaleband" id="bandI"></div>
         </div>
       </div>
+      ${
+        d.reach === "out-of-reach"
+          ? `<p class="warnline" style="display:block;margin-bottom:14px"><strong>Out of reach.</strong>
+               ${
+                 (d.reachableVia || []).length
+                   ? "Reachable through " + esc((ctx.reachableNames || []).join(", ")) + ". Those are the actors you actually engage."
+                   : "Nobody is recorded as able to reach them. Name who can — the manual&rsquo;s own instruction is to work out who you <em>can</em> influence who will in turn influence them."
+               }</p>`
+          : ""
+      }
       <fieldset>
         <span class="flabel">Rationale</span>
         <p class="fhint">What evidence produced these scores, and why they are not higher or lower. Not what the score means — what made you choose it.</p>
@@ -118,6 +140,8 @@ export function renderEditor(host, ctx) {
       ).join("")}
       <p class="fhint">Changing any of these starts a new strategy period. Use the note field below for events <em>within</em> the current approach — a meeting, a call, a filing. Over-versioning fragments the periods and makes the effect view useless.</p>
     </div>
+
+    <div class="pane" id="p-behaviour" ${tab !== "behaviour" ? "hidden" : ""}><div id="bbody"></div></div>
 
     <div class="pane" id="p-effect" ${tab !== "effect" ? "hidden" : ""}>
       <div id="ebody"></div>
@@ -265,6 +289,7 @@ export function renderEditor(host, ctx) {
 
   refresh();
 
+  if (tab === "behaviour" && ctx.onMarkers) ctx.onMarkers(q("#bbody"));
   if (tab === "effect") renderEffect(q("#ebody"), d, ctx.changes);
   if (tab === "hist") renderHistory(q("#hbody"), d, ctx.changes);
 }

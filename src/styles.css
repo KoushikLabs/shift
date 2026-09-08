@@ -483,3 +483,169 @@ footer strong { color: var(--muted); }
   .moverow { grid-template-columns: 1fr; }
   .moverow .mnums { text-align: left; }
 }
+
+
+/* ==========================================================================
+   SPEC v2 — the behaviour layer
+   ==========================================================================
+   Two accents carry meaning here and must not be spent on decoration:
+   --observed for a behaviour that was actually seen, and the existing
+   --oppose for backsliding. Triage (partner / target / out of reach) is a
+   separate axis from stance and is drawn as an outline chip so it never reads
+   as a stance colour.
+*/
+
+:root {
+  --observed: #1f6f52;
+  --observed-soft: #dcecE4;
+  --observed-soft: #dceCE4;
+  --observed-soft: #dcece4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --observed: #5fbe94; --observed-soft: #152b23; }
+}
+:root[data-theme="dark"] { --observed: #5fbe94; --observed-soft: #152b23; }
+
+/* ---- triage chip ---- */
+.reach {
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.09em;
+  text-transform: uppercase; padding: 1px 5px; border: 1px solid; white-space: nowrap;
+  margin-left: 6px; vertical-align: middle; border-radius: 2px;
+}
+.reach.bp { color: var(--ally); border-color: var(--ally); }
+.reach.pt { color: var(--oppose); border-color: var(--oppose); }
+.reach.oor { color: var(--faint); border-color: var(--rule-2); }
+
+/* ---- the instrument (SPEC 6.8) ---- */
+.instrument {
+  border: 1px solid var(--rule); background: var(--surface);
+  border-left: 3px solid var(--rule-2); margin-bottom: 4px;
+}
+.instrument.warn { border-left-color: var(--neutral); }
+.instrument.bad { border-left-color: var(--oppose); }
+.instrument.good { border-left-color: var(--ally); }
+.instrument.quiet { border-left-color: var(--rule-2); }
+.inst-grid { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 640px) { .inst-grid { grid-template-columns: 1fr; } }
+.inst-cell { padding: 14px 16px; }
+.inst-cell + .inst-cell { border-left: 1px solid var(--rule); }
+@media (max-width: 640px) { .inst-cell + .inst-cell { border-left: 0; border-top: 1px solid var(--rule); } }
+.inst-lab {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.13em;
+  text-transform: uppercase; margin-bottom: 8px;
+}
+.inst-lab.judged { color: var(--ally); }
+.inst-lab.observed { color: var(--neutral); }
+.inst-big {
+  font-family: var(--font-mono); font-size: 1.3rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.inst-note { font-size: 0.82rem; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+.pips { display: flex; gap: 3px; flex-wrap: wrap; min-height: 15px; align-items: center; }
+.pip { width: 13px; height: 13px; border: 1px solid var(--rule-2); background: var(--ground); display: inline-block; }
+.pip.on { background: var(--observed); border-color: var(--observed); }
+.tierline {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px;
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--muted);
+}
+.tierline b { color: var(--ink-2); font-weight: 600; }
+.tierline .bad { color: var(--oppose); }
+.tierline .bad b { color: var(--oppose); }
+.inst-verdict {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 12px 16px; border-top: 1px solid var(--rule); background: var(--surface-2);
+}
+.inst-verdict .mark { font-family: var(--font-mono); flex: none; color: var(--muted); }
+.instrument.warn .inst-verdict .mark { color: var(--neutral); }
+.instrument.bad .inst-verdict .mark { color: var(--oppose); }
+.instrument.good .inst-verdict .mark { color: var(--ally); }
+.inst-verdict p { margin: 0; font-size: 0.92rem; line-height: 1.45; }
+.inst-caveat {
+  margin: 0; padding: 8px 16px; font-size: 0.79rem; color: var(--faint);
+  border-top: 1px dashed var(--rule); background: var(--surface);
+}
+
+/* ---- markers ---- */
+.rung { border: 1px solid var(--rule); background: var(--surface); margin-bottom: 8px; border-left: 4px solid var(--rule-2); }
+.rung.t-start { border-left-color: var(--rule-2); }
+.rung.t-like { border-left-color: var(--ally); }
+.rung.t-love { border-left-color: var(--ink); }
+.rung.t-regression { border-left-color: var(--oppose); }
+.rung-head { padding: 9px 13px 7px; border-bottom: 1px solid var(--rule); background: var(--surface-2); }
+.rung-name {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--ink); font-weight: 600;
+}
+.rung-hint { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 3px; }
+.mklist { padding: 4px 12px; }
+.mkrow {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start;
+  padding: 7px 0; border-bottom: 1px dashed var(--rule);
+}
+.mkrow:last-child { border-bottom: none; }
+.mkrow.off { opacity: 0.55; }
+.mkbox {
+  width: 15px; height: 15px; border: 1px solid var(--rule-2); flex: none; margin-top: 2px;
+  display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff;
+}
+.mkbox.on { background: var(--observed); border-color: var(--observed); color: #fff; }
+.mkbox.neg { background: var(--oppose); border-color: var(--oppose); color: #fff; }
+.mktext { font-size: 0.9rem; line-height: 1.4; }
+.mkwhen {
+  display: inline-block; font-family: var(--font-mono); font-size: 9px;
+  color: var(--muted); margin-left: 8px;
+}
+.mkwarn {
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--neutral); border: 1px solid var(--neutral); border-radius: 2px; padding: 0 4px; margin-left: 6px;
+  cursor: help;
+}
+.mkacts { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+select.tiny { width: auto; font-size: 0.74rem; padding: 2px 5px; }
+details.retired { margin-top: 16px; border-top: 1px solid var(--rule); padding-top: 10px; }
+details.retired summary {
+  font-family: var(--font-mono); font-size: 0.76rem; color: var(--muted);
+  cursor: pointer; list-style: none;
+}
+details.retired summary::-webkit-details-marker { display: none; }
+details.retired summary::after { content: " +"; }
+details.retired[open] summary::after { content: " \2212"; }
+
+.tabs button .count {
+  font-family: var(--font-mono); font-size: 0.68rem; margin-left: 5px; color: var(--faint);
+}
+.tabs button.on .count { color: var(--ally); }
+
+/* ---- ladders view ---- */
+.ladderlist { display: grid; gap: 2px; background: var(--rule); border: 1px solid var(--rule); }
+.ladderrow {
+  background: var(--surface); padding: 14px 16px; display: grid;
+  grid-template-columns: 1fr auto; gap: 14px; align-items: center;
+  cursor: pointer; text-align: left; border: 0; width: 100%; font: inherit; color: inherit;
+  border-left: 3px solid var(--rule-2);
+}
+.ladderrow:hover { background: var(--surface-2); }
+.ladderrow.warn { border-left-color: var(--neutral); }
+.ladderrow.bad { border-left-color: var(--oppose); }
+.ladderrow.good { border-left-color: var(--ally); }
+.lr-name { font-family: var(--font-display); font-weight: 600; font-size: 0.98rem; display: flex; align-items: center; flex-wrap: wrap; }
+.lr-msg { display: block; font-size: 0.85rem; color: var(--muted); margin-top: 4px; max-width: 72ch; line-height: 1.45; }
+.lr-nums { text-align: right; white-space: nowrap; }
+.lr-count { font-family: var(--font-mono); font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lr-count span { font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+.lr-sub { display: block; font-family: var(--font-mono); font-size: 9.5px; color: var(--faint); margin-top: 2px; }
+
+/* ---- reflection cycle ---- */
+.revmarker {
+  font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; line-height: 1.35;
+  padding: 12px 14px; background: var(--surface-2); border-left: 3px solid var(--ally); margin-bottom: 10px;
+}
+.segs { display: flex; gap: 2px; background: var(--rule); border: 1px solid var(--rule); }
+.segs button {
+  flex: 1; border: 0; border-radius: 0; background: var(--surface-2); color: var(--muted);
+  font-size: 0.85rem; padding: 9px 8px;
+}
+.segs button.on { background: var(--surface); color: var(--ink); font-weight: 600; }
+.segs button.on.yes { box-shadow: inset 0 -2px 0 var(--observed); color: var(--observed); }
+.segs button.on.backwards { box-shadow: inset 0 -2px 0 var(--oppose); color: var(--oppose); }
+.segs button.on.not-yet { box-shadow: inset 0 -2px 0 var(--rule-2); }

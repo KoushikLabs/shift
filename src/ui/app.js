@@ -13,18 +13,29 @@ import { state } from "../store.js";
 import {
   APP_NAME,
   APP_VERSION,
+  DEPTH_BLURB,
+  DEPTH_LABELS,
+  DEPTH_MAP,
+  DEPTH_OUTCOME,
+  DEPTH_WATCH,
+  REACH_HINTS,
+  REACH_LABELS,
+  REACH_VALUES,
   coverage,
   hasStrategy,
   looksLikeIndividual,
   makeStakeholder,
   interestBand,
+  normalizeDepth,
   powerBand,
+  reachLabel,
   stanceLabel,
 } from "../domain.js";
 import { buildExampleProject } from "../example.js";
 import { backend } from "../backends/index.js";
 import { renderMatrix } from "./matrix.js";
-import { renderTiles, renderTable } from "./mapview.js";
+import { renderTiles, renderTable, boundaryPartnerWarning } from "./mapview.js";
+import { renderLadders, renderMarkers, reflectionDialog } from "./behaviour.js";
 import { renderEditor } from "./editor.js";
 import { renderMovement } from "./movement.js";
 import { renderCoverage } from "./coverage.js";
@@ -230,6 +241,7 @@ function projectShell() {
       <button id="pngBtn">Download PNG</button>
     </div>
 
+    <div id="bpWarn"></div>
     <div id="editor"></div>
 
     <h2>All stakeholders</h2>
@@ -237,6 +249,7 @@ function projectShell() {
     <div class="tablewrap" id="tablewrap"></div>
   </section>
 
+  <section id="view-behaviour" hidden></section>
   <section id="view-movement" hidden></section>
   <section id="view-coverage" hidden></section>
   <section id="view-data" hidden></section>
@@ -450,6 +463,7 @@ function renderProject() {
     if (el) el.hidden = !on;
   };
   show("#view-map", state.view === "map");
+  show("#view-behaviour", state.view === "behaviour");
   show("#view-movement", state.view === "movement");
   show("#view-coverage", state.view === "coverage");
   show("#view-data", state.view === "data");
@@ -470,13 +484,31 @@ function renderProject() {
   const mv = root.querySelector("#mvToggle");
   if (mv) mv.textContent = state.movementOnly ? "Show all" : "Show movement only";
 
+  const bpw = root.querySelector("#bpWarn");
+  if (bpw) bpw.innerHTML = normalizeDepth(p.depth) >= DEPTH_OUTCOME ? boundaryPartnerWarning(list) : "";
+
   renderDetail();
 
+  if (state.view === "behaviour") {
+    renderLadders(root.querySelector("#view-behaviour"), {
+      stakeholders: list,
+      depth: normalizeDepth(p.depth),
+      markersFor: store.markersFor,
+      observationsForStakeholder: store.observationsForStakeholder,
+      cycles: state.cycles,
+      onSelect: selectAndOpenBehaviour,
+      onReflect: runReflection,
+    });
+  }
   if (state.view === "movement") {
     renderMovement(root.querySelector("#view-movement"), list, store.changesFor, selectAndOpenMap);
   }
   if (state.view === "coverage") {
-    renderCoverage(root.querySelector("#view-coverage"), list, store.changesFor, selectAndOpenMap);
+    renderCoverage(root.querySelector("#view-coverage"), list, store.changesFor, selectAndOpenMap, {
+      depth: normalizeDepth(p.depth),
+      markersFor: store.markersFor,
+      observationsForStakeholder: store.observationsForStakeholder,
+    });
   }
   if (state.view === "data") {
     renderData(root.querySelector("#view-data"), {
@@ -504,12 +536,13 @@ function renderViewNav() {
   const movedCount = list.filter((s) => s.baseline && (s.baseline.power !== s.power || s.baseline.interest !== s.interest)).length;
   const gaps = cov.noStrategy.length + cov.quadrantLabel.length + cov.noRationale.length;
 
-  const items = [
-    ["map", "Map", list.length],
-    ["movement", "Movement", movedCount],
-    ["coverage", "Coverage", gaps],
-    ["data", "Data", null],
-  ];
+  const depth = normalizeDepth(state.project.depth);
+  const items = [["map", "Map", list.length]];
+  if (depth >= DEPTH_WATCH) {
+    const observedNow = list.reduce((n, s) => n + store.liveMarkersFor(s.id).length, 0);
+    items.push(["behaviour", "Behaviour", observedNow]);
+  }
+  items.push(["movement", "Movement", movedCount], ["coverage", "Coverage", gaps], ["data", "Data", null]);
   nav.innerHTML = items
     .map(
       ([v, label, count]) =>
@@ -537,13 +570,31 @@ function renderDetail() {
     lastEditorKey = "";
     return;
   }
-  const key = [d.id, state.detailTab, d.updatedAt || "", d.power, d.interest, d.name, (store.changesFor(d.id) || []).length].join("|");
+  const key = [
+    d.id,
+    state.detailTab,
+    d.updatedAt || "",
+    d.power,
+    d.interest,
+    d.name,
+    d.reach,
+    (store.changesFor(d.id) || []).length,
+    store.markersFor(d.id).length,
+    store.observationsForStakeholder(d.id).length,
+  ].join("|");
   if (state.dirty && key === lastEditorKey) return; // never clobber live typing
   lastEditorKey = key;
 
+  const depth = normalizeDepth(state.project.depth);
   renderEditor(host, {
     stakeholder: d,
     changes: store.changesFor(d.id),
+    depth,
+    markers: store.markersFor(d.id),
+    reachableNames: (d.reachableVia || [])
+      .map((id) => (state.stakeholders.find((x) => x.id === id) || {}).name)
+      .filter(Boolean),
+    onMarkers: (bodyHost) => renderMarkerPane(bodyHost, d),
     tab: state.detailTab,
     onTab: (t) => {
       store.setDirty(false);
@@ -559,6 +610,79 @@ function renderDetail() {
     onClose: closeEditor,
     onDelete: () => deleteStakeholderDialog(d),
     onIdentity: () => identityDialog(d),
+  });
+}
+
+/** Wires the Behaviour tab inside the stakeholder editor. */
+function renderMarkerPane(host, d) {
+  const rerender = () => {
+    lastEditorKey = "";
+    renderDetail();
+  };
+  renderMarkers(host, {
+    stakeholder: d,
+    markers: store.markersFor(d.id),
+    observations: store.observationsForStakeholder(d.id),
+    depth: normalizeDepth(state.project.depth),
+    onAdd: async (fields) => {
+      const res = await store.addMarker(d.id, fields);
+      if (!res.ok && res.message) store.notify(res.message, "error");
+      rerender();
+    },
+    onUpdate: async (id, fields) => {
+      await store.updateMarker(id, fields);
+      rerender();
+    },
+    onToggleWatch: async (id, watched) => {
+      await store.setMarkerWatched(id, watched);
+      rerender();
+    },
+    onRetire: async (id) => {
+      await store.retireMarker(id);
+      rerender();
+    },
+    onRestore: async (id) => {
+      await store.restoreMarker(id);
+      rerender();
+    },
+    onDelete: async (id) => {
+      const res = await store.deleteMarker(id);
+      if (!res.ok && res.message) store.notify(res.message, "error");
+      rerender();
+    },
+  });
+}
+
+async function runReflection() {
+  if (!(await confirmDiscard())) return;
+  const result = await reflectionDialog({
+    stakeholders: state.stakeholders,
+    markersFor: store.markersFor,
+    observationsForStakeholder: store.observationsForStakeholder,
+    cycles: state.cycles,
+  });
+  if (!result) return;
+  const res = await store.commitCycle(result.cycle, result.entries);
+  if (res.ok) {
+    store.notify(
+      `${result.cycle.label} recorded — ${plural(res.count, "behaviour")} reviewed. Each entry is append-only; a correction is a new review.`,
+      "good"
+    );
+  } else if (res.message) {
+    store.notify(res.message, "error");
+  }
+}
+
+async function selectAndOpenBehaviour(id) {
+  if (!(await confirmDiscard())) return;
+  store.setDirty(false);
+  lastEditorKey = "";
+  store.state.view = "map";
+  store.state.detailTab = "behaviour";
+  store.select(id, { force: true });
+  requestAnimationFrame(() => {
+    const card = root.querySelector("#editorCard");
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 }
 
@@ -647,10 +771,27 @@ async function newProjectDialog() {
         hint: "What power and interest mean for THIS map. Writing it down now stops the scores drifting later.",
         value: "Power 0–10 over whether this succeeds. Interest −10 to +10 on this specific objective, not on the issue generally.",
       },
+      {
+        key: "depth",
+        label: "How much measurement machinery?",
+        type: "select",
+        value: String(DEPTH_MAP),
+        hint: DEPTH_BLURB[DEPTH_MAP],
+        options: [DEPTH_MAP, DEPTH_WATCH, DEPTH_OUTCOME].map((d) => ({
+          value: String(d),
+          label: DEPTH_LABELS[d],
+        })),
+      },
     ],
+    onInput: (v, dlg) => {
+      const f = dlg.querySelector("#f-depth");
+      if (!f) return;
+      const hint = f.closest("fieldset").querySelector(".fhint");
+      if (hint) hint.textContent = DEPTH_BLURB[normalizeDepth(v.depth)];
+    },
   });
   if (!v) return;
-  await store.createProject(v);
+  await store.createProject({ ...v, depth: normalizeDepth(v.depth) });
 }
 
 async function editProjectDialog() {
@@ -662,10 +803,24 @@ async function editProjectDialog() {
       { key: "name", label: "Name", required: true, value: p.name },
       { key: "description", label: "What is this map for", type: "textarea", rows: 2, value: p.description },
       { key: "scaleNote", label: "Scoring convention", type: "textarea", rows: 2, value: p.scaleNote },
+      {
+        key: "depth",
+        label: "How much measurement machinery?",
+        type: "select",
+        value: String(normalizeDepth(p.depth)),
+        hint: DEPTH_BLURB[normalizeDepth(p.depth)],
+        options: [DEPTH_MAP, DEPTH_WATCH, DEPTH_OUTCOME].map((d) => ({ value: String(d), label: DEPTH_LABELS[d] })),
+      },
     ],
+    onInput: (v, dlg) => {
+      const f = dlg.querySelector("#f-depth");
+      if (!f) return;
+      const hint = f.closest("fieldset").querySelector(".fhint");
+      if (hint) hint.textContent = DEPTH_BLURB[normalizeDepth(v.depth)];
+    },
   });
   if (!v) return;
-  await store.updateProject(v);
+  await store.updateProject({ ...v, depth: normalizeDepth(v.depth) });
 }
 
 async function deleteProjectDialog() {
@@ -699,6 +854,14 @@ async function addStakeholderDialog() {
         placeholder: "Regulator · Ministry · Industry body · Civil society · Academic · Funder …",
         hint: "Free text — use your own vocabulary.",
       },
+      {
+        key: "reach",
+        label: "What kind of relationship is this?",
+        type: "select",
+        value: "partner",
+        hint: "Separate from whether they agree with you. A supplier you speak to weekly and score −6 is still a partner.",
+        options: REACH_VALUES.map((v) => ({ value: v, label: REACH_LABELS[v] })),
+      },
       { key: "power", label: "Power — 0 to 10", type: "range", min: 0, max: 10, value: 5 },
       { key: "interest", label: "Interest — −10 to +10 · negative means opposed", type: "range", min: -10, max: 10, value: 0 },
       {
@@ -721,6 +884,11 @@ async function addStakeholderDialog() {
       const bi = dlg.querySelector("#f-interest-band");
       if (bp) bp.textContent = powerBand(v.power);
       if (bi) bi.textContent = interestBand(v.interest);
+      const reachHint = dlg.querySelector("#f-reach");
+      if (reachHint) {
+        const holder = reachHint.closest("fieldset").querySelector(".fhint");
+        if (holder) holder.textContent = REACH_HINTS[v.reach] || "";
+      }
       const chk = dlg.querySelector("#f-isIndividual");
       // Suggest the flag once, from the name — but never override the user.
       if (chk && !chk.dataset.touched && looksLikeIndividual(v.name)) chk.checked = true;
@@ -736,18 +904,40 @@ async function addStakeholderDialog() {
 }
 
 async function identityDialog(d) {
+  const others = state.stakeholders.filter((x) => x.id !== d.id);
   const v = await formDialog({
     title: "Rename stakeholder",
     intro:
-      "Name and type are not versioned — only power, interest, rationale and strategy are. Renaming does not create a history entry.",
+      "Name, type and triage are not versioned — only power, interest, rationale and strategy are. Changing them does not create a history entry.",
     submitLabel: "Save",
     fields: [
       { key: "name", label: "Name", required: true, value: d.name },
       { key: "type", label: "Type", value: d.type },
+      {
+        key: "reach",
+        label: "What kind of relationship is this?",
+        type: "select",
+        value: d.reach || "partner",
+        hint: REACH_HINTS[d.reach || "partner"],
+        options: REACH_VALUES.map((r) => ({ value: r, label: REACH_LABELS[r] })),
+      },
+      ...(others.length
+        ? [
+            {
+              key: "reachableVia",
+              label: "Who can reach them",
+              type: "select",
+              value: (d.reachableVia || [])[0] || "",
+              hint: "Only used when they are out of reach. The manual's instruction is to work out who you can influence who will in turn influence them.",
+              options: [{ value: "", label: "— nobody recorded —" }, ...others.map((o) => ({ value: o.id, label: o.name }))],
+            },
+          ]
+        : []),
       { key: "isIndividual", type: "checkbox", label: "This is a named individual, not an organisation", value: d.isIndividual },
     ],
   });
   if (!v) return;
+  if (v.reachableVia !== undefined) v.reachableVia = v.reachableVia ? [v.reachableVia] : [];
   lastEditorKey = "";
   const res = await store.updateStakeholderIdentity(d.id, v);
   if (!res.ok && res.message) store.notify(res.message, "error");
@@ -891,6 +1081,9 @@ function exportPayload() {
     project: state.project,
     stakeholders: state.stakeholders,
     changesFor: store.changesFor,
+    markers: store.allMarkers(),
+    observations: store.allObservations(),
+    cycles: state.cycles,
     appVersion: APP_VERSION,
   });
 }
