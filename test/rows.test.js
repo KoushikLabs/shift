@@ -23,6 +23,7 @@ import {
   makeCycle,
   newId,
   normalizeStrategy,
+  VOCABULARY_DEFAULTS,
 } from "../src/domain.js";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -47,6 +48,10 @@ describe("project mapping", () => {
       description: "d",
       scaleNote: "s",
       depth: 1,
+      vision: "",
+      mission: "",
+      vocabulary: VOCABULARY_DEFAULTS,
+      readiness: null,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     });
@@ -66,6 +71,47 @@ describe("depth on the project row", () => {
     expect(rowToProject({ id: "x", name: "x", depth: 2 }).depth).toBe(2);
     expect(rowToProject({ id: "x", name: "x" }).depth).toBe(1);
     expect(rowToProject({ id: "x", name: "x", depth: 99 }).depth).toBe(1);
+  });
+});
+
+describe("outcome-map fields on the project row", () => {
+  it("round-trips vision, mission, vocabulary and readiness", () => {
+    const p = makeProject({
+      name: "Field building",
+      depth: 3,
+      vision: "Wild animal welfare is a normal, funded field of inquiry.",
+      mission: "We build the field by funding researchers and convening them.",
+      vocabulary: { partner: "Key actor", startTier: "Expect to see" },
+      readiness: { funder: 2, person: 1 },
+    });
+    const back = rowToProject(projectToRow(p, ORG));
+    expect(back.vision).toMatch(/normal, funded field/);
+    expect(back.mission).toMatch(/funding researchers/);
+    expect(back.vocabulary.partner).toBe("Key actor");
+    expect(back.vocabulary.target).toBe("Pressure target");
+    expect(back.readiness).toEqual({ funder: 2, person: 1 });
+  });
+
+  it("keeps readiness null when it was never scored", () => {
+    expect(rowToProject(projectToRow(makeProject({ name: "x" }), ORG)).readiness).toBe(null);
+  });
+});
+
+describe("strategy map on the stakeholder row", () => {
+  it("round-trips the six cells", () => {
+    const s = makeStakeholder("p", {
+      name: "Suppliers",
+      strategyMap: { i1: "Fund conversion training", e3: "Support a producer association" },
+    });
+    const back = rowToStakeholder(stakeholderToRow(s, ORG));
+    expect(back.strategyMap.i1).toBe("Fund conversion training");
+    expect(back.strategyMap.e3).toBe("Support a producer association");
+    expect(back.strategyMap.e1).toBe("");
+  });
+
+  it("survives a row with no strategy_map at all", () => {
+    const back = rowToStakeholder({ id: "x", project_id: "p", name: "n", power: 5, interest: 0, baseline: {} });
+    expect(back.strategyMap).toEqual({ i1: "", i2: "", i3: "", e1: "", e2: "", e3: "" });
   });
 });
 

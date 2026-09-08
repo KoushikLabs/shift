@@ -396,6 +396,10 @@ export function makeStakeholder(projectId, fields = {}) {
     interest,
     rationale,
     strategy,
+    // SPEC v2 §7 — the 2x3 grid. Not versioned with the strategy itself: it is
+    // a classification of the approach, and re-tagging a cell is not a change
+    // of tack that should open a new strategy period.
+    strategyMap: normalizeStrategyMap(fields.strategyMap),
     baseline: { power, interest, rationale, strategy: { ...strategy }, at },
     createdAt: at,
     updatedAt: null,
@@ -412,6 +416,11 @@ export function makeProject(fields = {}) {
     scaleNote: String(fields.scaleNote || ""),
     // SPEC v2 §4 — how much measurement machinery this map carries.
     depth: normalizeDepth(fields.depth),
+    // Depth 3 only. The vision is deliberately bigger than the organisation.
+    vision: String(fields.vision || ""),
+    mission: String(fields.mission || ""),
+    vocabulary: normalizeVocabulary(fields.vocabulary),
+    readiness: fields.readiness && typeof fields.readiness === "object" ? { ...fields.readiness } : null,
     createdAt: at,
     updatedAt: fields.updatedAt || at,
   };
@@ -483,7 +492,11 @@ export function normalizeReach(v) {
 }
 
 export function reachLabel(v) {
-  return REACH_LABELS[normalizeReach(v)];
+  const r = normalizeReach(v);
+  const vocab = vocabulary();
+  if (r === "partner") return vocab.partner;
+  if (r === "target") return vocab.target;
+  return REACH_LABELS[r];
 }
 
 /** SPEC v2 §7: warn above seven boundary partners. */
@@ -527,6 +540,7 @@ export function normalizeDepth(v) {
 
 export const MARKER_TIERS = ["start", "like", "love", "regression"];
 
+/** Raw tier names. Use tierLabel() in the UI — it applies the map's vocabulary. */
 export const TIER_LABELS = {
   start: "Start to see",
   like: "Like to see",
@@ -546,6 +560,12 @@ export const TIER_WEIGHT = { start: 1, like: 2, love: 3, regression: 0 };
 
 export function normalizeTier(v) {
   return MARKER_TIERS.includes(v) ? v : null;
+}
+
+/** Tier name with the map's vocabulary applied — the first rung is renameable. */
+export function tierLabel(t) {
+  if (t === "start") return vocabulary().startTier;
+  return TIER_LABELS[t] || "";
 }
 
 export const OBSERVED_VALUES = ["yes", "not-yet", "backwards"];
@@ -804,4 +824,325 @@ export function judgedVsObserved(stakeholder, markers, observations) {
       "Judgement and observation agree. Two independent readings saying the same thing is the state worth reporting.";
   }
   return result;
+}
+
+/* ==========================================================================
+   SPEC v2 §7 — vocabulary swaps
+   ==========================================================================
+   The OMLC explicitly licenses renaming, and three of Outcome Mapping's terms
+   are documented as causing trouble in rooms: "boundary partner" is conceded as
+   "not always intuitive", "influence" produces "a risk of partners feeling
+   patronised", and "expect to see" gets read as the current baseline rather
+   than the earliest response to your inputs.
+
+   Four swaps, set once per map. Not a general renaming system — every
+   configurable label is a translation layer, and the point is to settle the
+   words in the orientation session and then use them consistently.
+
+   These live in module state rather than being threaded through every render
+   function. The app has exactly one open map at a time, this is display text
+   only, and store.openProject sets it. The alternative was passing a vocabulary
+   object through eight UI modules to change four strings.
+*/
+
+export const VOCABULARY_FIELDS = ["partner", "target", "startTier", "behaviour"];
+
+export const VOCABULARY_DEFAULTS = {
+  partner: "Boundary partner",
+  target: "Pressure target",
+  startTier: "Start to see",
+  behaviour: "behaviour",
+};
+
+export const VOCABULARY_PROMPTS = {
+  partner: {
+    label: "What do you call an actor you work with directly?",
+    hint: 'The OMLC concedes "boundary partner" is not always intuitive. Partners, change agents, key actors, social actors.',
+    options: ["Boundary partner", "Partner", "Key actor", "Change agent", "Social actor"],
+  },
+  target: {
+    label: "And one you are applying pressure to?",
+    hint: "Standard Outcome Mapping has no category for this at all. Target actor and duty-bearer are both in documented use.",
+    options: ["Pressure target", "Target actor", "Duty-bearer", "Campaign target"],
+  },
+  startTier: {
+    label: "The first rung of the ladder",
+    hint: '"Expect to see" is routinely misread as their current baseline. It means the earliest response to your inputs, which is why some facilitators say "start to see" instead.',
+    options: ["Start to see", "Expect to see"],
+  },
+  behaviour: {
+    label: "The word for what you are tracking",
+    hint: '"Behaviour change" carries negative connotations in some rooms. "Change in practice" is the documented substitute.',
+    options: ["behaviour", "practice", "action"],
+  },
+};
+
+export function normalizeVocabulary(v) {
+  const out = { ...VOCABULARY_DEFAULTS };
+  if (v && typeof v === "object") {
+    for (const k of VOCABULARY_FIELDS) {
+      if (typeof v[k] === "string" && v[k].trim()) out[k] = v[k].trim();
+    }
+  }
+  return out;
+}
+
+let activeVocabulary = { ...VOCABULARY_DEFAULTS };
+
+/** Called by the store whenever a map is opened or its settings change. */
+export function setActiveVocabulary(v) {
+  activeVocabulary = normalizeVocabulary(v);
+}
+
+export function vocabulary() {
+  return activeVocabulary;
+}
+
+export function resetVocabulary() {
+  activeVocabulary = { ...VOCABULARY_DEFAULTS };
+}
+
+/* ==========================================================================
+   SPEC v2 §7 — the readiness scorecard
+   ==========================================================================
+   Ten conditions, three of them disqualifying on their own. Shown and recorded
+   when a map is raised to depth 3; a gate zero warns loudly and does not block.
+
+   A self-serve tool that refuses to proceed gets worked around, and the
+   recorded answers are worth more later than the refusal would have been. What
+   it does do is recommend a depth — which turns the scorecard from a ceremony
+   into the thing that picks how much machinery this map should carry.
+*/
+
+export const READINESS_CONDITIONS = [
+  { key: "strategy", text: "Strategy and programme areas are settled", gate: false },
+  { key: "purpose", text: "The team agrees on the organisation's purpose", gate: false },
+  { key: "actors", text: "They can name five or more external actors they have live working relationships with", gate: false },
+  { key: "funder", text: "The primary funder will accept self-assessed, non-attributed data — confirmed, not assumed", gate: true },
+  { key: "leadership", text: "The ED or equivalent is committed to attending the key sessions", gate: false },
+  { key: "person", text: "A named person has roughly one day per quarter protected, indefinitely", gate: true },
+  { key: "horizon", text: "The programme horizon is two years or more", gate: false },
+  { key: "meeting", text: "There is an existing recurring meeting the reflection cycle can attach to", gate: false },
+  { key: "behaviour", text: "Results genuinely depend on other people's behaviour, not on delivery volume", gate: true },
+  { key: "learning", text: "Learning matters to them more than proving attribution", gate: false },
+];
+
+export const READINESS_MAX = READINESS_CONDITIONS.length * 2;
+
+/**
+ * @param scores {key: 0|1|2|null}
+ * @returns {{answered, total, gateFailures[], verdict, headline, detail, recommendedDepth}}
+ */
+export function readinessVerdict(scores) {
+  const s = scores || {};
+  const answered = READINESS_CONDITIONS.filter((c) => s[c.key] === 0 || s[c.key] === 1 || s[c.key] === 2).length;
+  const total = READINESS_CONDITIONS.reduce((n, c) => n + (Number(s[c.key]) || 0), 0);
+  const gateFailures = READINESS_CONDITIONS.filter((c) => c.gate && s[c.key] === 0);
+
+  if (answered === 0) {
+    return {
+      answered, total, gateFailures, verdict: "unscored",
+      headline: "Score the ten conditions to see what this map should carry.",
+      detail: "",
+      recommendedDepth: null,
+    };
+  }
+  if (gateFailures.length) {
+    return {
+      answered, total, gateFailures, verdict: "decline",
+      headline: "This organisation is not ready for a full outcome map.",
+      detail:
+        "A zero on " +
+        (gateFailures.length === 1 ? "a disqualifying condition" : "any disqualifying condition") +
+        " outranks the total, whatever else is in place. " +
+        gateFailures.map((g) => "“" + g.text + "”").join(" and ") +
+        ". Run the map at Watch instead and revisit this in a year.",
+      recommendedDepth: DEPTH_WATCH,
+    };
+  }
+  if (answered < READINESS_CONDITIONS.length) {
+    return {
+      answered, total, gateFailures, verdict: "partial",
+      headline: answered + " of " + READINESS_CONDITIONS.length + " scored.",
+      detail: "The recommendation needs all ten — the gates in particular.",
+      recommendedDepth: null,
+    };
+  }
+  if (total >= 16) {
+    return {
+      answered, total, gateFailures, verdict: "full",
+      headline: "Ready for a full outcome map.",
+      detail: "Price in the first reflection session from the start. It is the one people cut, and the one that decides whether any of this survives an ordinary quarter.",
+      recommendedDepth: DEPTH_OUTCOME,
+    };
+  }
+  if (total >= 11) {
+    return {
+      answered, total, gateFailures, verdict: "stripped",
+      headline: "Ready for a stripped outcome map.",
+      detail: "Three boundary partners at most, and the outcome journal only. Do not attempt the full apparatus at this score.",
+      recommendedDepth: DEPTH_OUTCOME,
+    };
+  }
+  if (total >= 6) {
+    return {
+      answered, total, gateFailures, verdict: "watch",
+      headline: "Not yet. Run it at Watch.",
+      detail: "Two to four observable behaviours per actor, reviewed quarterly. If they sustain that for two quarters, revisit the full method — and if they cannot, this was a far cheaper way to find out.",
+      recommendedDepth: DEPTH_WATCH,
+    };
+  }
+  return {
+    answered, total, gateFailures, verdict: "decline",
+    headline: "Not ready for behaviour tracking of any kind.",
+    detail: "Actor mapping alone is the honest offer here — the map, the scores and the reasoning, and nothing that needs a quarterly commitment.",
+    recommendedDepth: DEPTH_MAP,
+  };
+}
+
+/* ==========================================================================
+   SPEC v2 §7 — the outcome challenge
+   ==========================================================================
+   Kate Dyer's four checks, read out before drafting rather than after. Three of
+   them can be checked mechanically; the fourth — whether two stakeholders have
+   been bundled that should be separate — cannot, and is prompted instead.
+*/
+
+export const DYER_CHECKS = [
+  "Have you bundled actors that should be separate? Local with central government, elected representatives with appointed officials.",
+  "Does this capture real transformation, or is it target setting?",
+  "Is it specific — no “improved”, no “increased”?",
+  "Is it six to eight lines?",
+];
+
+const CHALLENGE_VAGUE = [
+  "improved", "improve", "increased", "increase", "enhanced", "strengthened",
+  "more aware", "awareness", "adequate", "appropriate", "minimum standards",
+  "acknowledge the importance", "capacity building", "better",
+];
+
+/**
+ * Warnings for an outcome challenge. Advisory, like the marker checks — the
+ * tell for a bad one is prose style, and no regex settles that.
+ */
+export function outcomeChallengeWarnings(text) {
+  const t = String(text == null ? "" : text).trim();
+  const out = [];
+  if (!t) return out;
+  const words = t.split(/\s+/).filter(Boolean);
+
+  if (words.length < 25) {
+    out.push({
+      code: "short",
+      message:
+        "Short for an outcome challenge. Dyer's rule of thumb is six to eight lines describing how they would behave if you succeeded beyond expectation — not a one-line objective.",
+    });
+  }
+
+  const vague = CHALLENGE_VAGUE.filter((v) => new RegExp("\\b" + v.replace(/ /g, "\\s+") + "\\b", "i").test(t));
+  if (vague.length) {
+    out.push({
+      code: "vague",
+      message:
+        "Contains " + vague.map((v) => "“" + v + "”").join(", ") +
+        ". The tell for a weak challenge is exactly this register — results-based management wearing a costume.",
+    });
+  }
+
+  if (/\b(we|our|us)\b/i.test(t)) {
+    out.push({
+      code: "our-delivery",
+      message:
+        "Mentions what you do. An outcome challenge describes a change in THEM — their behaviour, relationships, activities or actions — never your delivery.",
+    });
+  }
+
+  return out;
+}
+
+/* ==========================================================================
+   SPEC v2 §7 — the strategy map
+   ==========================================================================
+   A 2x3 grid per outcome challenge. Rows: strategies aimed at the actor (I)
+   versus at the environment they operate in (E). Columns: causal, persuasive,
+   supportive.
+
+   THE POINT IS THE EMPTY CELLS. A team with all six entries in row I is working
+   on the actor and nothing around them; a team with only causal entries has
+   exactly one tactic. Any rendering that treats gaps as tidy has thrown away
+   the exercise.
+*/
+
+export const STRATEGY_CELLS = ["i1", "i2", "i3", "e1", "e2", "e3"];
+
+export const STRATEGY_ROWS = [
+  { key: "i", label: "At the actor", cells: ["i1", "i2", "i3"] },
+  { key: "e", label: "At their environment", cells: ["e1", "e2", "e3"] },
+];
+
+export const STRATEGY_COLS = [
+  { key: "causal", label: "Causal", hint: "Direct, single purpose" },
+  { key: "persuasive", label: "Persuasive", hint: "Works on the drivers of change" },
+  { key: "supportive", label: "Supportive", hint: "Builds an enabling environment" },
+];
+
+export const STRATEGY_CELL_HINTS = {
+  i1: "Something you do directly to them that produces the change on its own — funding, training, supplying casework.",
+  i2: "Works on what already motivates them — evidence, peer comparison, reputation, a cost they already want to avoid.",
+  i3: "Makes it easier for them to act — brokering introductions, removing a practical obstacle, sharing a method.",
+  e1: "Direct action on their surroundings that forces the change — litigation, regulation, a binding standard.",
+  e2: "Changes what their environment expects of them — briefing their buyers, funders, members or press.",
+  e3: "Builds something around them that sustains the change — a coalition, an association, an infrastructure.",
+};
+
+export function emptyStrategyMap() {
+  return { i1: "", i2: "", i3: "", e1: "", e2: "", e3: "" };
+}
+
+export function normalizeStrategyMap(m) {
+  const out = emptyStrategyMap();
+  if (m && typeof m === "object") {
+    for (const k of STRATEGY_CELLS) if (m[k] != null) out[k] = String(m[k]);
+  }
+  return out;
+}
+
+export function hasStrategyMap(m) {
+  const x = normalizeStrategyMap(m);
+  return STRATEGY_CELLS.some((k) => x[k].trim());
+}
+
+/**
+ * What the gaps say. Returns the observations worth reading out loud in the
+ * room, which is how this exercise is actually facilitated.
+ */
+export function strategyMapGaps(m) {
+  const x = normalizeStrategyMap(m);
+  const filled = (k) => Boolean(x[k].trim());
+  const out = [];
+  if (!hasStrategyMap(x)) return out;
+
+  const rowI = ["i1", "i2", "i3"].filter(filled).length;
+  const rowE = ["e1", "e2", "e3"].filter(filled).length;
+  const causal = ["i1", "e1"].filter(filled).length;
+  const persuasive = ["i2", "e2"].filter(filled).length;
+  const supportive = ["i3", "e3"].filter(filled).length;
+
+  if (rowE === 0) {
+    out.push("Everything is aimed at the actor and nothing at their environment. That is a team working on a body in isolation from whatever actually constrains it.");
+  }
+  if (rowI === 0) {
+    out.push("Everything is aimed at the environment and nothing at the actor directly, which is unusual for someone described as a partner.");
+  }
+  if (causal && !persuasive && !supportive) {
+    out.push("Only causal strategies. That is exactly one tactic — if it does not work there is nothing behind it.");
+  }
+  if (!causal && (persuasive || supportive)) {
+    out.push("Nothing causal. Everything here works through someone else, which may be right, but say so deliberately.");
+  }
+  const empties = STRATEGY_CELLS.filter((k) => !filled(k));
+  if (empties.length && empties.length < 6 && out.length === 0) {
+    out.push(empties.length + " of the six cells are empty. That is normal — the useful question is whether each gap is a choice or an oversight.");
+  }
+  return out;
 }

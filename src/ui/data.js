@@ -80,6 +80,22 @@ export function renderData(host, ctx) {
       <div class="actions" style="margin:10px 0 0"><button id="expJson2">Download a backup now</button></div>
     </div>
 
+    ${
+      ctx.depthExtras
+        ? `<div class="datacard">
+             <h3>Outcome map</h3>
+             <p>Readiness, the words this map uses, and the journal each review produces.</p>
+             ${ctx.depthExtras.readinessHtml}
+             <div class="actions" style="margin:12px 0 0">
+               <button id="omReadiness">Score readiness…</button>
+               <button id="omVocab">Vocabulary…</button>
+               <button id="omVision">Vision &amp; mission…</button>
+             </div>
+             <div class="actions tight"><button id="omJournal">Download an outcome journal</button></div>
+           </div>`
+        : ""
+    }
+
     <div class="datacard">
       <h3>Delete this map</h3>
       <p>Removes the map, its ${plural(stakeholders.length, "stakeholder")} and all
@@ -101,6 +117,12 @@ export function renderData(host, ctx) {
   on("impJson", ctx.onImportJson);
   on("editProject", ctx.onEditProject);
   on("delProject", ctx.onDeleteProject);
+  if (ctx.depthExtras) {
+    on("omReadiness", ctx.depthExtras.onReadiness);
+    on("omVocab", ctx.depthExtras.onVocabulary);
+    on("omVision", ctx.depthExtras.onVision);
+    on("omJournal", ctx.depthExtras.onJournal);
+  }
 
   describeStorage(host, ctx);
 }

@@ -17,7 +17,9 @@ import {
   normalizeDepth,
   normalizeReach,
   normalizeStrategy,
+  normalizeStrategyMap,
   normalizeTier,
+  normalizeVocabulary,
   OBSERVED_VALUES,
 } from "../domain.js";
 
@@ -41,6 +43,10 @@ export function projectToRow(project, orgId) {
     description: str(project.description),
     scale_note: str(project.scaleNote),
     depth: normalizeDepth(project.depth),
+    vision: str(project.vision),
+    mission: str(project.mission),
+    vocabulary: normalizeVocabulary(project.vocabulary),
+    readiness: project.readiness && typeof project.readiness === "object" ? project.readiness : null,
     created_at: iso(project.createdAt) || new Date().toISOString(),
     updated_at: iso(project.updatedAt) || new Date().toISOString(),
   };
@@ -53,6 +59,10 @@ export function rowToProject(row) {
     description: str(row.description),
     scaleNote: str(row.scale_note),
     depth: normalizeDepth(row.depth),
+    vision: str(row.vision),
+    mission: str(row.mission),
+    vocabulary: normalizeVocabulary(row.vocabulary),
+    readiness: row.readiness && typeof row.readiness === "object" ? row.readiness : null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
@@ -76,6 +86,7 @@ export function stakeholderToRow(s, orgId) {
     interest: clampInterest(s.interest),
     rationale: str(s.rationale),
     strategy,
+    strategy_map: normalizeStrategyMap(s.strategyMap),
     baseline: {
       power: clampPower(b.power ?? s.power),
       interest: clampInterest(b.interest ?? s.interest),
@@ -103,6 +114,7 @@ export function rowToStakeholder(row) {
     interest: clampInterest(row.interest),
     rationale: str(row.rationale),
     strategy: normalizeStrategy(row.strategy),
+    strategyMap: normalizeStrategyMap(row.strategy_map),
     baseline: {
       power: clampPower(b.power),
       interest: clampInterest(b.interest),

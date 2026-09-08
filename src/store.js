@@ -20,6 +20,8 @@ import {
   normalizeDepth,
   normalizeReach,
   normalizeStrategy,
+  normalizeStrategyMap,
+  setActiveVocabulary,
   nowISO,
   clampPower,
   clampInterest,
@@ -202,6 +204,8 @@ export async function openProject(id) {
       return { ok: false };
     }
     state.project = loaded.project;
+    // The map's agreed words, applied to every label that offers a swap.
+    setActiveVocabulary(loaded.project.vocabulary);
     state.stakeholders = loaded.stakeholders.sort(byName);
     state.changes = indexChanges(loaded.changes);
     state.markers = indexBy(loaded.markers, "stakeholderId");
@@ -241,6 +245,7 @@ export async function updateProject(fields) {
     return fail(e);
   }
   state.project = next;
+  setActiveVocabulary(next.vocabulary);
   state.projects = await backend().listProjects();
   emit();
   return { ok: true };
@@ -300,6 +305,26 @@ export async function addStakeholdersBulk(list) {
   bumpProject();
   emit();
   return { ok: true, count: made.length };
+}
+
+/**
+ * The 2x3 strategy map. Deliberately NOT part of commit(): re-tagging which
+ * cell an approach belongs in is a classification, not a change of tack, and
+ * versioning it would fragment the strategy periods for no gain.
+ */
+export async function updateStrategyMap(id, map) {
+  const s = state.stakeholders.find((x) => x.id === id);
+  if (!s) return { ok: false };
+  const next = { ...s, strategyMap: normalizeStrategyMap(map) };
+  try {
+    await backend().putStakeholder(next, touchProject());
+  } catch (e) {
+    return fail(e);
+  }
+  replaceStakeholder(next);
+  bumpProject();
+  emit();
+  return { ok: true };
 }
 
 /** Identity fields only. SPEC 8 versions power/interest/rationale/strategy — not the name. */

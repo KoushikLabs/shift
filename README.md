@@ -88,7 +88,7 @@ Each map carries one of three depths, set in its settings and changeable at any 
 |---|---|---|
 | **1 · Map** | Score actors on power and interest, say why, name an engagement strategy. | Default |
 | **2 · Watch** | Also record two to four observable behaviours per actor and review them each quarter. | Opt in |
-| **3 · Outcome map** | The four-tier Outcome Mapping ladder — start / like / love / hope-not-to-see. | Opt in |
+| **3 · Outcome map** | Vision and mission, the readiness scorecard, outcome challenges with Dyer’s checks, the four-tier ladder, the 2×3 strategy map, and an outcome journal per review. | Opt in |
 
 Depths 2 and 3 share one record: a progress marker is a Watch behaviour with a tier, so moving between them
 sorts what already exists rather than asking for it again, and accumulated observations carry forward.
@@ -146,7 +146,7 @@ file.
 ```bash
 npm install
 npm run dev      # dev server with hot reload
-npm test         # 149 unit tests: domain, behaviour layer, import/export, row mapping, service worker
+npm test         # 185 unit tests: domain, behaviour layer, outcome map, import/export, row mapping, service worker
 npm run build    # -> dist/ : one HTML file plus icons, manifest, service worker
 ```
 
@@ -263,6 +263,7 @@ src/
     modal.js         dialogs   importwizard.js  the CSV mapping wizard
     account.js       sign-in, organisations, members, invites, migration
     behaviour.js     markers, the judged/observed instrument, the reflection cycle
+    outcomemap.js    readiness, vocabulary, vision, the strategy map, the journal
   pwa.js             service-worker registration and the install prompt
 public/              copied to dist as-is
   manifest.webmanifest   sw.js   icon-*.png
@@ -271,11 +272,12 @@ scripts/
 supabase/
   migrations/0001_init.sql        tables, RLS policies, membership functions
   migrations/0002_behaviour.sql   triage, depth, markers, observations, cycles
+  migrations/0003_outcome_map.sql vision, mission, vocabulary, readiness, strategy map
 docs/
   HOSTING.md         setting up the hosted backend
 test/
-  domain.test.js 38  markers.test.js 33  io.test.js 39
-  rows.test.js 30    sw.test.js 9                        (149 total)
+  domain.test.js 38  markers.test.js 33  outcomemap.test.js 32
+  io.test.js 39      rows.test.js 34     sw.test.js 9    (185 total)
 ```
 
 Two rules worth knowing before changing anything:

@@ -44,7 +44,9 @@ keep a full longitudinal record on its own machine, with you holding nothing.
 2. Paste the entire contents of [`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql).
 3. Run it. It should finish with no errors, and it is safe to re-run.
 4. Do the same with [`supabase/migrations/0002_behaviour.sql`](../supabase/migrations/0002_behaviour.sql), which
-   adds the actor triage, map depth, and the markers / observations / cycles tables. Also safe to re-run.
+   adds the actor triage, map depth, and the markers / observations / cycles tables.
+5. And [`supabase/migrations/0003_outcome_map.sql`](../supabase/migrations/0003_outcome_map.sql), which adds
+   vision, mission, vocabulary, readiness and the strategy map. All three are safe to re-run.
 
 This creates the tables, the Row Level Security policies that keep organisations apart, and the functions
 that handle sign-up, invites and membership.

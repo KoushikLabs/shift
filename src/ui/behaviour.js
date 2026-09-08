@@ -28,6 +28,7 @@ import {
   TIER_HINTS,
   TIER_LABELS,
   defaultCycleLabel,
+  tierLabel,
   judgedVsObserved,
   ladderState,
   latestObservations,
@@ -61,7 +62,7 @@ export function instrumentHtml(stakeholder, markers, observations) {
   const tiers = MARKER_TIERS.filter((t) => l.tiers[t].total > 0)
     .map(
       (t) =>
-        `<span>${esc(TIER_LABELS[t].toLowerCase())} <b>${l.tiers[t].observed}/${l.tiers[t].total}</b></span>`
+        `<span>${esc(tierLabel(t).toLowerCase())} <b>${l.tiers[t].observed}/${l.tiers[t].total}</b></span>`
     )
     .join("");
   const untiered = l.untiered.total
@@ -157,7 +158,7 @@ export function renderMarkers(host, ctx) {
       ${
         isLadder
           ? `<div class="actions tight"><select id="mkTier" style="width:auto">${MARKER_TIERS.map(
-              (t) => `<option value="${t}">${esc(TIER_LABELS[t])}</option>`
+              (t) => `<option value="${t}">${esc(tierLabel(t))}</option>`
             ).join("")}</select><button class="primary" id="mkAdd" disabled>Add</button></div>`
           : `<div class="actions tight"><button class="primary" id="mkAdd" disabled>Add</button></div>`
       }
@@ -218,7 +219,7 @@ export function renderMarkers(host, ctx) {
 function tierShell(tier, items, latest, ctx) {
   return `<div class="rung t-${tier}">
     <div class="rung-head">
-      <span class="rung-name">${esc(TIER_LABELS[tier])}</span>
+      <span class="rung-name">${esc(tierLabel(tier))}</span>
       <span class="rung-hint">${esc(TIER_HINTS[tier])}</span>
     </div>
     <div class="mklist">${
@@ -250,7 +251,7 @@ function markerRow(m, obs, ctx) {
       ${
         isLadder && !m.retired
           ? `<select data-tier-of="${esc(m.id)}" class="tiny">${MARKER_TIERS.map(
-              (t) => `<option value="${t}" ${m.tier === t ? "selected" : ""}>${esc(TIER_LABELS[t])}</option>`
+              (t) => `<option value="${t}" ${m.tier === t ? "selected" : ""}>${esc(tierLabel(t))}</option>`
             ).join("")}</select>`
           : ""
       }

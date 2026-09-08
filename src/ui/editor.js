@@ -38,7 +38,8 @@ import {
   strategyPeriods,
 } from "../domain.js";
 import { esc, fmtDate, fmtDateTime, signed } from "./dom.js";
-import { DEPTH_WATCH, reachLabel } from "../domain.js";
+import { DEPTH_OUTCOME, DEPTH_WATCH, outcomeChallengeWarnings, reachLabel } from "../domain.js";
+import { dyerChecksHtml, strategyMapHtml } from "./outcomemap.js";
 import { renderMarkers } from "./behaviour.js";
 
 /**
@@ -124,21 +125,40 @@ export function renderEditor(host, ctx) {
     </div>
 
     <div class="pane" id="p-strategy" ${tab !== "strategy" ? "hidden" : ""}>
+      ${ctx.depth >= DEPTH_OUTCOME ? dyerChecksHtml() : ""}
       ${st === "oppose" && strategyMissing ? `<p class="warnline" style="margin-bottom:14px" >
         <strong>Opponents get a strategy too.</strong> This is the commonest gap. “Do not approach first; monitor filings; respond only through formal process” is a strategy — it says what you will and will not do, and what would change it. “Monitor” is not.</p>` : ""}
       ${STRATEGY_FIELDS.map(
         (k) => `<fieldset>
-          <span class="flabel">${STRATEGY_LABELS[k]}</span>
-          <p class="fhint">${esc(STRATEGY_HINTS[k])}</p>
+          <span class="flabel">${
+            k === "objective" && ctx.depth >= DEPTH_OUTCOME ? "Outcome challenge" : STRATEGY_LABELS[k]
+          }</span>
+          <p class="fhint">${esc(
+            k === "objective" && ctx.depth >= DEPTH_OUTCOME
+              ? "How this actor would behave if you succeeded beyond expectation. Six to eight lines describing a change in THEM — their behaviour, relationships, activities or actions — never your delivery."
+              : STRATEGY_HINTS[k]
+          )}</p>
           ${
             k === "owner" || k === "cadence"
               ? `<input type="text" id="s-${k}" value="${esc(d.strategy[k] || "")}">`
-              : `<textarea id="s-${k}" rows="${k === "objective" ? 2 : 3}">${esc(d.strategy[k] || "")}</textarea>`
+              : `<textarea id="s-${k}" rows="${
+                  k === "objective" ? (ctx.depth >= DEPTH_OUTCOME ? 6 : 2) : 3
+                }">${esc(d.strategy[k] || "")}</textarea>`
           }
+          ${k === "objective" && ctx.depth >= DEPTH_OUTCOME ? '<div id="challengeWarn"></div>' : ""}
           ${k === "objective" ? '<p class="warnline" id="warnQuadrant" hidden><strong>That is a quadrant label, not a strategy.</strong> “Monitor”, “keep informed” and the rest describe an intensity of attention. They are derived from the two scores, so they carry no information the scores do not already carry. Say what should be <em>different</em> about this stakeholder.</p>' : ""}
         </fieldset>`
       ).join("")}
       <p class="fhint">Changing any of these starts a new strategy period. Use the note field below for events <em>within</em> the current approach — a meeting, a call, a filing. Over-versioning fragments the periods and makes the effect view useless.</p>
+
+      ${
+        ctx.depth >= DEPTH_OUTCOME
+          ? `<h4 style="margin-top:24px">Strategy map</h4>
+             <p class="fhint">How each approach works: on the actor, or on what surrounds them. Saved as you type —
+               this is a classification of the approach, not a change of tack, so it does not open a new strategy period.</p>
+             <div id="smapHost">${strategyMapHtml(d.strategyMap)}</div>`
+          : ""
+      }
     </div>
 
     <div class="pane" id="p-behaviour" ${tab !== "behaviour" ? "hidden" : ""}><div id="bbody"></div></div>
@@ -234,6 +254,14 @@ export function renderEditor(host, ctx) {
     const wq = q("#warnQuadrant");
     if (wq) wq.hidden = !looksLikeQuadrantLabel(ns.objective);
 
+    // SPEC v2 §7 — at depth 3 the objective IS the outcome challenge, and
+    // Dyer's three testable checks apply to it.
+    const cw = q("#challengeWarn");
+    if (cw) {
+      const cws = outcomeChallengeWarnings(ns.objective);
+      cw.innerHTML = cws.map((w) => `<p class="warnline" style="display:block">${esc(w.message)}</p>`).join("");
+    }
+
     const anyChange = scoreMoved || rationaleMoved || strategyMoved;
     save.disabled = !anyChange || gate.blocked;
     if (ctx.onDirty) ctx.onDirty(anyChange);
@@ -278,6 +306,24 @@ export function renderEditor(host, ctx) {
       save.disabled = false;
     }
   });
+
+  const smapHost = q("#smapHost");
+  if (smapHost && ctx.onStrategyMap) {
+    let timer = null;
+    smapHost.addEventListener("input", (e) => {
+      const cell = e.target.closest("[data-cell]");
+      if (!cell) return;
+      cell.closest(".sm-cell").className = "sm-cell " + (cell.value.trim() ? "filled" : "empty");
+      clearTimeout(timer);
+      // Saves on its own rather than through the Save button: this is a
+      // classification of the approach, not part of the versioned change.
+      timer = setTimeout(() => {
+        const map = {};
+        for (const t of smapHost.querySelectorAll("[data-cell]")) map[t.dataset.cell] = t.value;
+        ctx.onStrategyMap(map);
+      }, 700);
+    });
+  }
 
   q("#revert").addEventListener("click", () => {
     if (ctx.onDirty) ctx.onDirty(false);

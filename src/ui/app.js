@@ -36,6 +36,13 @@ import { backend } from "../backends/index.js";
 import { renderMatrix } from "./matrix.js";
 import { renderTiles, renderTable, boundaryPartnerWarning } from "./mapview.js";
 import { renderLadders, renderMarkers, reflectionDialog } from "./behaviour.js";
+import {
+  outcomeJournalText,
+  readinessDialog,
+  readinessSummaryHtml,
+  visionPanelHtml,
+  vocabularyDialog,
+} from "./outcomemap.js";
 import { renderEditor } from "./editor.js";
 import { renderMovement } from "./movement.js";
 import { renderCoverage } from "./coverage.js";
@@ -219,6 +226,7 @@ function projectShell() {
   <nav class="viewnav" id="viewnav" role="tablist"></nav>
 
   <section id="view-map">
+    <div id="visionHost"></div>
     <h2>The map</h2>
     <p class="note">Colour is stance — allies, neutrals and opponents are distinguished explicitly, not inferred
       from grid position. The dashed vertical line is zero interest. A dotted trail shows movement from where a
@@ -487,6 +495,13 @@ function renderProject() {
   const bpw = root.querySelector("#bpWarn");
   if (bpw) bpw.innerHTML = normalizeDepth(p.depth) >= DEPTH_OUTCOME ? boundaryPartnerWarning(list) : "";
 
+  const vh = root.querySelector("#visionHost");
+  if (vh) {
+    vh.innerHTML = normalizeDepth(p.depth) >= DEPTH_OUTCOME ? visionPanelHtml(p) : "";
+    const ev = vh.querySelector("#editVision");
+    if (ev) ev.addEventListener("click", visionDialog);
+  }
+
   renderDetail();
 
   if (state.view === "behaviour") {
@@ -525,6 +540,28 @@ function renderProject() {
       onImportJson: importJson,
       onEditProject: editProjectDialog,
       onDeleteProject: deleteProjectDialog,
+      depthExtras:
+        normalizeDepth(p.depth) >= DEPTH_OUTCOME
+          ? {
+              readinessHtml: readinessSummaryHtml(p.readiness),
+              onReadiness: async () => {
+                const res = await readinessDialog(state.project.readiness);
+                if (res && res.scores) {
+                  await store.updateProject({ readiness: res.scores });
+                  store.notify("Readiness recorded with the map.", "good");
+                }
+              },
+              onVocabulary: async () => {
+                const v = await vocabularyDialog(state.project.vocabulary);
+                if (v) {
+                  await store.updateProject({ vocabulary: v });
+                  store.notify("Vocabulary saved. It applies wherever those terms appear.", "good");
+                }
+              },
+              onVision: visionDialog,
+              onJournal: exportJournal,
+            }
+          : null,
     });
   }
 }
@@ -595,6 +632,7 @@ function renderDetail() {
       .map((id) => (state.stakeholders.find((x) => x.id === id) || {}).name)
       .filter(Boolean),
     onMarkers: (bodyHost) => renderMarkerPane(bodyHost, d),
+    onStrategyMap: (map) => store.updateStrategyMap(d.id, map),
     tab: state.detailTab,
     onTab: (t) => {
       store.setDirty(false);
@@ -820,7 +858,104 @@ async function editProjectDialog() {
     },
   });
   if (!v) return;
-  await store.updateProject({ ...v, depth: normalizeDepth(v.depth) });
+  const nextDepth = normalizeDepth(v.depth);
+  const wasDepth = normalizeDepth(p.depth);
+  await store.updateProject({ ...v, depth: nextDepth });
+
+  // Raising a map to a full outcome map is the moment to ask whether this
+  // organisation can sustain one. It warns loudly; it never blocks.
+  if (nextDepth === DEPTH_OUTCOME && wasDepth < DEPTH_OUTCOME) {
+    const res = await readinessDialog(state.project.readiness);
+    if (res && res.scores) {
+      await store.updateProject({ readiness: res.scores });
+      if (res.recommendedDepth && res.recommendedDepth < DEPTH_OUTCOME) {
+        store.notify(
+          "Scorecard saved. It recommends " +
+            DEPTH_LABELS[res.recommendedDepth] +
+            " rather than a full outcome map. The map is still set to Outcome map — that is your call to keep or change.",
+          "error"
+        );
+      } else {
+        store.notify("Readiness recorded with the map.", "good");
+      }
+    }
+  }
+}
+
+async function visionDialog() {
+  const p = state.project;
+  const v = await formDialog({
+    title: "Vision and mission",
+    intro:
+      "Not what you plan to do. What the world looks like if you and everyone else working on this succeeds — it should be bigger than you, which is the point.",
+    submitLabel: "Save",
+    fields: [
+      {
+        key: "vision",
+        label: "Vision",
+        type: "textarea",
+        rows: 5,
+        value: p.vision,
+        hint: "The change in the world, beyond this organisation. Imagine it granted, then describe what an ordinary Tuesday looks like.",
+      },
+      {
+        key: "mission",
+        label: "Mission",
+        type: "textarea",
+        rows: 4,
+        value: p.mission,
+        hint: "Your lane inside that vision. The territory, not the activity list.",
+      },
+    ],
+  });
+  if (!v) return;
+  await store.updateProject(v);
+}
+
+/** One review, as plain text for the meeting it will be read in. */
+async function exportJournal() {
+  const cycles = state.cycles;
+  if (!cycles.length) {
+    return alertDialog({
+      title: "No reviews yet",
+      body: `<p class="note">Run a reflection cycle from the <strong>Behaviour</strong> tab first. The journal is
+        the record that cycle produces.</p>`,
+    });
+  }
+  const pick =
+    cycles.length === 1
+      ? { cycle: cycles[0].id }
+      : await formDialog({
+          title: "Which review?",
+          submitLabel: "Download",
+          fields: [
+            {
+              key: "cycle",
+              label: "Review",
+              type: "select",
+              value: cycles[0].id,
+              options: cycles.map((c) => ({ value: c.id, label: c.label })),
+            },
+          ],
+        });
+  if (!pick) return;
+
+  const cycle = cycles.find((c) => c.id === pick.cycle);
+  if (!cycle) return;
+  const entries = store.allObservations().filter((o) => o.cycleId === cycle.id);
+  const names = new Map(state.stakeholders.map((s) => [s.id, s.name]));
+  const markers = new Map(store.allMarkers().map((m) => [m.id, m.text]));
+
+  const text = outcomeJournalText({
+    project: state.project,
+    cycle,
+    entries,
+    stakeholderName: (id) => names.get(id),
+    markerText: (id) => markers.get(id),
+  });
+  const name = `${slug(state.project.name)}-journal-${slug(cycle.label)}.txt`;
+  downloadText(text, name, "text/plain;charset=utf-8");
+  store.notify(`Saved ${name}.`, "good");
 }
 
 async function deleteProjectDialog() {

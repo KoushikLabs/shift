@@ -23,6 +23,7 @@ import {
   makeProject,
   newId,
   normalizeStrategy,
+  normalizeStrategyMap,
   nowISO,
   strategyPeriods,
 } from "../domain.js";
@@ -112,6 +113,10 @@ function readNativeExport(data) {
     description: str(data.project?.description),
     scaleNote: str(data.project?.scaleNote),
     depth: data.project?.depth,
+    vision: str(data.project?.vision),
+    mission: str(data.project?.mission),
+    vocabulary: data.project?.vocabulary,
+    readiness: data.project?.readiness,
     createdAt: str(data.project?.createdAt) || nowISO(),
     updatedAt: str(data.project?.updatedAt) || nowISO(),
   });
@@ -256,10 +261,12 @@ function coerceStakeholder(raw, projectId, i) {
     isIndividual: Boolean(raw.isIndividual),
     reach: raw.reach,
     reachableVia: Array.isArray(raw.reachableVia) ? raw.reachableVia.map(str).filter(Boolean) : [],
+    strategyMap: raw.strategyMap,
     power,
     interest,
     rationale,
     strategy,
+    strategyMap: normalizeStrategyMap(raw.strategyMap),
     baseline: {
       power: clampPower(num(b.power, power)),
       interest: clampInterest(num(b.interest, interest)),
