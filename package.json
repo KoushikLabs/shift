@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "node scripts/check-no-external.mjs dist/index.html"
+    "check": "node scripts/check-no-external.mjs dist/index.html",
+    "sql": "node scripts/build-setup-sql.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.1",

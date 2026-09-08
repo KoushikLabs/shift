@@ -41,38 +41,42 @@ keep a full longitudinal record on its own machine, with you holding nothing.
 ## 2. Create the tables and the access rules
 
 1. In the Supabase dashboard, open **SQL Editor → New query**.
-2. Paste the entire contents of [`supabase/migrations/0001_init.sql`](../supabase/migrations/0001_init.sql).
-3. Run it. It should finish with no errors, and it is safe to re-run.
-4. Do the same with [`supabase/migrations/0002_behaviour.sql`](../supabase/migrations/0002_behaviour.sql), which
-   adds the actor triage, map depth, and the markers / observations / cycles tables.
-5. And [`supabase/migrations/0003_outcome_map.sql`](../supabase/migrations/0003_outcome_map.sql), which adds
-   vision, mission, vocabulary, readiness and the strategy map. All three are safe to re-run.
+2. Paste the entire contents of **[`supabase/setup.sql`](../supabase/setup.sql)** and run it.
 
-This creates the tables, the Row Level Security policies that keep organisations apart, and the functions
-that handle sign-up, invites and membership.
+That one file is all three migrations concatenated, and it is idempotent — running it twice changes nothing.
+Use the individual files in `supabase/migrations/` only when applying a change to a database that already
+exists.
 
-### Check it actually works
+It creates ten tables, twenty-eight Row Level Security policies and eleven functions: the isolation that keeps
+one organisation'''s data unreadable to another, and the append-only guarantee on `changes` and `observations`.
 
-Still in the SQL editor, run:
+### Check it actually worked
+
+Run these as a second query. **Both must come back the way this says, or stop.**
 
 ```sql
 select tablename, rowsecurity from pg_tables
- where schemaname = 'public'
-   and tablename in ('organisations','memberships','projects','stakeholders','changes','invites','profiles',
-                     'markers','observations','cycles');
+ where schemaname = '''public'''
+   and tablename in ('''organisations''','''memberships''','''invites''','''profiles''',
+                     '''projects''','''stakeholders''','''changes''',
+                     '''markers''','''observations''','''cycles''')
+ order by tablename;
 ```
 
-Every row must show `rowsecurity = true`. If any is false, stop — that table is readable by anyone with the
+Ten rows, every one showing `rowsecurity = true`. A false means that table is readable by anyone holding the
 public key.
 
-Then confirm history really is append-only. Both of these must **fail**:
+Then confirm history cannot be rewritten. **Each of these must FAIL** with a permission error:
 
 ```sql
-update public.changes set rationale = 'tampered' where id = (select id from public.changes limit 1);
-delete from public.changes where id = (select id from public.changes limit 1);
-update public.observations set narrative = 'tampered' where id = (select id from public.observations limit 1);
-delete from public.observations where id = (select id from public.observations limit 1);
+update public.changes set rationale = '''tampered''';
+delete from public.changes;
+update public.observations set narrative = '''tampered''';
+delete from public.observations;
 ```
+
+If any of them succeeds, the append-only guarantee is not in place and the behaviour record cannot be trusted
+as evidence.
 
 ## 3. Configure authentication
 
