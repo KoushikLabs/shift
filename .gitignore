@@ -15,3 +15,6 @@ SPEC.md
 # from GitHub Actions variables/secrets instead).
 .env
 .env.local
+
+# Local preview server config for the Browser pane.
+.claude/

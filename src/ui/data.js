@@ -46,8 +46,9 @@ export function renderData(host, ctx) {
   <div class="datagrid">
     <div class="datacard">
       <h3>Add stakeholders from a spreadsheet</h3>
-      <p>Paste CSV or tab-separated rows and map the columns. Adds to this map; it does not replace anything.</p>
-      <div class="actions" style="margin:0"><button id="impCsv">Paste a spreadsheet…</button></div>
+      <p>Open an Excel file (.xlsx) or a CSV, or paste rows straight from a sheet, then map the columns.
+         Adds to this map; it does not replace anything.</p>
+      <div class="actions" style="margin:0"><button id="impCsv">Import a spreadsheet…</button></div>
     </div>
     <div class="datacard">
       <h3>Load a JSON export</h3>

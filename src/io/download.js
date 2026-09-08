@@ -78,3 +78,17 @@ export function readFile(file) {
     fr.readAsText(file);
   });
 }
+
+/**
+ * Read a file as bytes. The import wizard needs this to tell an .xlsx (a ZIP)
+ * from a CSV before deciding how to read it — sniffing the first four bytes is
+ * reliable where the file extension is not.
+ */
+export function readFileBinary(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(new Uint8Array(fr.result));
+    fr.onerror = () => reject(new Error("Could not read that file."));
+    fr.readAsArrayBuffer(file);
+  });
+}

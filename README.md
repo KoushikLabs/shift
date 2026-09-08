@@ -132,7 +132,7 @@ deletes the instrument.
 
 | | |
 |---|---|
-| **CSV in** | Paste rows from Excel or Sheets, or pick a file. Columns are auto-mapped and always shown for correction. Comma, semicolon and tab are all recognised, as are quoted fields, embedded newlines and `+6` / `−6`. |
+| **Spreadsheet in** | Open an Excel `.xlsx` directly — sheet picker included, and a title row above the headers is detected rather than imported as a column. Or paste rows, or pick a CSV. Columns are auto-mapped and always shown for correction. Comma, semicolon and tab are all recognised, as are quoted fields, embedded newlines and `+6` / `−6`. |
 | **JSON in** | A Shift export, restored with history intact. Also reads an *Export everything* dump from the [`stakeholder-matrix`](#origin) Claude skill, so a map started there can be brought across. |
 | **CSV out** | One row per stakeholder: scores, stance, rationale, all five strategy fields, baseline and movement columns. |
 | **JSON out** | Everything, including the full append-only history and the derived strategy periods. Round-trips cleanly — this is how a map moves between devices and people. |
@@ -251,6 +251,7 @@ src/
   example.js         the demo map (entirely fictional)
   io/
     csv.js           RFC-4180-ish parser, column guessing, export with formula-injection guards
+    xlsx.js          .xlsx reader — ZIP + the XML subset that holds cell values, no library
     json.js          full-fidelity export; readers for Shift and stakeholder-matrix dumps
     png.js           SVG → PNG, baking CSS custom properties into the serialised copy
     download.js      file downloads and clipboard
@@ -260,7 +261,7 @@ src/
     editor.js        the four-tab detail editor and the staleness gate
     mapview.js       tiles and the sortable table
     movement.js  coverage.js  data.js  projects.js
-    modal.js         dialogs   importwizard.js  the CSV mapping wizard
+    modal.js         dialogs   importwizard.js  the spreadsheet mapping wizard
     account.js       sign-in, organisations, members, invites, migration
     behaviour.js     markers, the judged/observed instrument, the reflection cycle
     outcomemap.js    readiness, vocabulary, vision, the strategy map, the journal
