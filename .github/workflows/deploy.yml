@@ -45,6 +45,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Optional: where people without an approved email ask for access.
+          VITE_ACCESS_REQUEST_URL: ${{ vars.ACCESS_REQUEST_URL }}
         run: npm run build
 
       - name: Fail if the build would contact a third party

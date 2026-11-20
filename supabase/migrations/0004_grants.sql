@@ -33,22 +33,22 @@
 -- it, and the only thing anon needs is execute on peek_invite() and
 -- keepalive(), both granted in earlier migrations.
 
-grant usage on schema public to anon, authenticated;
+grant usage on schema shift to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Start from nothing, for both roles, on every table this schema owns.
 -- ---------------------------------------------------------------------------
 
-revoke all on public.profiles      from anon, authenticated;
-revoke all on public.organisations from anon, authenticated;
-revoke all on public.memberships   from anon, authenticated;
-revoke all on public.invites       from anon, authenticated;
-revoke all on public.projects      from anon, authenticated;
-revoke all on public.stakeholders  from anon, authenticated;
-revoke all on public.changes       from anon, authenticated;
-revoke all on public.markers       from anon, authenticated;
-revoke all on public.cycles        from anon, authenticated;
-revoke all on public.observations  from anon, authenticated;
+revoke all on shift.profiles      from anon, authenticated;
+revoke all on shift.organisations from anon, authenticated;
+revoke all on shift.memberships   from anon, authenticated;
+revoke all on shift.invites       from anon, authenticated;
+revoke all on shift.projects      from anon, authenticated;
+revoke all on shift.stakeholders  from anon, authenticated;
+revoke all on shift.changes       from anon, authenticated;
+revoke all on shift.markers       from anon, authenticated;
+revoke all on shift.cycles        from anon, authenticated;
+revoke all on shift.observations  from anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Grant back exactly what the policies need. Each line matches the policies
@@ -57,27 +57,27 @@ revoke all on public.observations  from anon, authenticated;
 -- ---------------------------------------------------------------------------
 
 -- Your own profile, and the profiles of people you share an organisation with.
-grant select, update on public.profiles to authenticated;
+grant select, update on shift.profiles to authenticated;
 
 -- Organisations are created through create_organisation(), which is SECURITY
 -- DEFINER, so no INSERT privilege is needed or wanted here.
-grant select, update, delete on public.organisations to authenticated;
+grant select, update, delete on shift.organisations to authenticated;
 
 -- Joining happens only through accept_invite(). No INSERT: if clients could
 -- write this table, anyone could add themselves to any organisation, which is
 -- the entire isolation model undone.
-grant select, update on public.memberships to authenticated;
+grant select, update on shift.memberships to authenticated;
 
 -- Invites are minted by create_invite(). Admins can list and revoke them.
-grant select, delete on public.invites to authenticated;
+grant select, delete on shift.invites to authenticated;
 
 -- The working data.
-grant select, insert, update, delete on public.projects     to authenticated;
-grant select, insert, update, delete on public.stakeholders to authenticated;
-grant select, insert, update, delete on public.markers      to authenticated;
+grant select, insert, update, delete on shift.projects     to authenticated;
+grant select, insert, update, delete on shift.stakeholders to authenticated;
+grant select, insert, update, delete on shift.markers      to authenticated;
 
 -- A cycle's summary is editable while the review is open.
-grant select, insert, update on public.cycles to authenticated;
+grant select, insert, update on shift.cycles to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- The append-only tables. SELECT and INSERT, and deliberately nothing else.
@@ -88,14 +88,14 @@ grant select, insert, update on public.cycles to authenticated;
 -- should not be enough to lose it.
 -- ---------------------------------------------------------------------------
 
-grant select, insert on public.changes      to authenticated;
-grant select, insert on public.observations to authenticated;
+grant select, insert on shift.changes      to authenticated;
+grant select, insert on shift.observations to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- And make sure future tables do not inherit a blanket grant behind our backs.
 -- ---------------------------------------------------------------------------
 
-alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema shift revoke all on tables from anon;
 
 -- ============================================================================
 -- VERIFY — this is the query that actually answers the question
@@ -106,12 +106,12 @@ alter default privileges in schema public revoke all on tables from anon;
 -- effective privilege and is the one to trust.
 --
 --   select t.tablename,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'SELECT') as sel,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'INSERT') as ins,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'UPDATE') as upd,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'DELETE') as del
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'SELECT') as sel,
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'INSERT') as ins,
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'UPDATE') as upd,
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'DELETE') as del
 --     from pg_tables t
---    where t.schemaname = 'public'
+--    where t.schemaname = 'shift'
 --      and t.tablename in ('profiles','organisations','memberships','invites',
 --                          'projects','stakeholders','changes',
 --                          'markers','cycles','observations')

@@ -17,12 +17,23 @@ import { createClient } from "@supabase/supabase-js";
 const URL_ = (import.meta.env.VITE_SUPABASE_URL || "").trim();
 const KEY_ = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 
+/**
+ * Where someone whose email cannot sign up directly asks for access. Optional.
+ * A hosted copy can limit who may create an account (The MEL Barn's does, with
+ * a Supabase "Before User Created" hook); when it does, set this so the sign-up
+ * form can point people to the request form. Unset, nothing is shown.
+ */
+export const ACCESS_REQUEST_URL = (import.meta.env.VITE_ACCESS_REQUEST_URL || "").trim();
+
 let client = null;
 let configError = null;
 
 if (URL_ && KEY_) {
   try {
     client = createClient(URL_, KEY_, {
+      // Shift's tables live in their own schema so the project can host other
+      // tools beside it. See supabase/migrations/0001_init.sql.
+      db: { schema: "shift" },
       auth: {
         persistSession: true,
         autoRefreshToken: true,

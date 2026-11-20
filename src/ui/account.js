@@ -13,6 +13,7 @@ import { local } from "../backends/index.js";
 import { ensureUuids } from "../backends/rows.js";
 import { customDialog, confirmDialog, alertDialog, formDialog } from "./modal.js";
 import { esc, fmtDate, plural } from "./dom.js";
+import { ACCESS_REQUEST_URL } from "../supabaseClient.js";
 
 /* ------------------------------------------------------------- sign in/up */
 
@@ -51,7 +52,13 @@ export function signInDialog(startOn = "signin") {
           ${
             tab === "signin"
               ? `<div class="actions tight"><button type="button" class="ghost small" id="a-forgot">Forgot your password?</button></div>`
-              : `<div class="caveat" style="margin-top:14px">By creating an account you are choosing to store your
+              : `${
+                  ACCESS_REQUEST_URL
+                    ? `<p class="fhint" style="margin-top:14px">Accounts are open to approved organisation emails.
+                         No organisation email, or yours is not accepted?
+                         <a href="${esc(ACCESS_REQUEST_URL)}" target="_blank" rel="noopener">Ask for access</a>.</p>`
+                    : ""
+                }<div class="caveat" style="margin-top:14px">By creating an account you are choosing to store your
                    stakeholder assessments on the server rather than only in this browser. You can export
                    everything at any time, and delete your organisation whenever you like.</div>`
           }
