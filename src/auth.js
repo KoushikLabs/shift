@@ -76,7 +76,19 @@ async function adoptSession(s) {
     return;
   }
   session.user = { id: s.user.id, email: s.user.email || "" };
+  await ensureProfile();
   await refreshOrgs();
+}
+
+// A MEL Barn account made from another MEL tool (for example Bellwether) has no
+// Shift profile yet; make it the first time that account opens Shift. Doing
+// nothing on failure keeps sign-in working before the database function exists.
+async function ensureProfile() {
+  try {
+    await supabase().rpc("ensure_profile");
+  } catch (e) {
+    /* the profile only fills in names on member lists */
+  }
 }
 
 export async function refreshOrgs() {
