@@ -27,10 +27,10 @@
 -- Existing tables
 -- ============================================================================
 
-alter table public.projects
+alter table shift.projects
   add column if not exists depth int not null default 1 check (depth between 1 and 3);
 
-alter table public.stakeholders
+alter table shift.stakeholders
   add column if not exists reach text not null default 'partner'
     check (reach in ('partner', 'target', 'out-of-reach')),
   -- Who can reach an actor we cannot. One hop, for the manual's own instruction
@@ -42,11 +42,11 @@ alter table public.stakeholders
 -- New tables
 -- ============================================================================
 
-create table if not exists public.markers (
+create table if not exists shift.markers (
   id             uuid primary key default gen_random_uuid(),
-  org_id         uuid not null references public.organisations(id) on delete cascade,
-  project_id     uuid not null references public.projects(id) on delete cascade,
-  stakeholder_id uuid not null references public.stakeholders(id) on delete cascade,
+  org_id         uuid not null references shift.organisations(id) on delete cascade,
+  project_id     uuid not null references shift.projects(id) on delete cascade,
+  stakeholder_id uuid not null references shift.stakeholders(id) on delete cascade,
   -- A gerund phrase naming one observable act. Form is checked in the client,
   -- where it can warn rather than refuse: every rule is a heuristic over free
   -- text and a false positive that blocks would get the check switched off.
@@ -60,10 +60,10 @@ create table if not exists public.markers (
   retired_at     timestamptz
 );
 
-create table if not exists public.cycles (
+create table if not exists shift.cycles (
   id                   uuid primary key default gen_random_uuid(),
-  org_id               uuid not null references public.organisations(id) on delete cascade,
-  project_id           uuid not null references public.projects(id) on delete cascade,
+  org_id               uuid not null references shift.organisations(id) on delete cascade,
+  project_id           uuid not null references shift.projects(id) on delete cascade,
   label                text not null default '',
   opened_at            timestamptz not null default now(),
   closed_at            timestamptz,
@@ -75,13 +75,13 @@ create table if not exists public.cycles (
   map_changes_proposed text not null default ''
 );
 
-create table if not exists public.observations (
+create table if not exists shift.observations (
   id             uuid primary key default gen_random_uuid(),
-  org_id         uuid not null references public.organisations(id) on delete cascade,
-  project_id     uuid not null references public.projects(id) on delete cascade,
-  stakeholder_id uuid not null references public.stakeholders(id) on delete cascade,
-  marker_id      uuid not null references public.markers(id) on delete cascade,
-  cycle_id       uuid references public.cycles(id) on delete set null,
+  org_id         uuid not null references shift.organisations(id) on delete cascade,
+  project_id     uuid not null references shift.projects(id) on delete cascade,
+  stakeholder_id uuid not null references shift.stakeholders(id) on delete cascade,
+  marker_id      uuid not null references shift.markers(id) on delete cascade,
+  cycle_id       uuid references shift.cycles(id) on delete set null,
   at             timestamptz not null default now(),
   by             uuid references auth.users(id) on delete set null,
   by_email       text not null default '',
@@ -96,73 +96,73 @@ create table if not exists public.observations (
   significance   text not null default ''
 );
 
-create index if not exists markers_project_idx      on public.markers (project_id);
-create index if not exists markers_stakeholder_idx  on public.markers (stakeholder_id);
-create index if not exists cycles_project_idx       on public.cycles (project_id, opened_at desc);
-create index if not exists observations_project_idx on public.observations (project_id);
-create index if not exists observations_marker_idx  on public.observations (marker_id, at desc);
+create index if not exists markers_project_idx      on shift.markers (project_id);
+create index if not exists markers_stakeholder_idx  on shift.markers (stakeholder_id);
+create index if not exists cycles_project_idx       on shift.cycles (project_id, opened_at desc);
+create index if not exists observations_project_idx on shift.observations (project_id);
+create index if not exists observations_marker_idx  on shift.observations (marker_id, at desc);
 
 -- ============================================================================
 -- Row Level Security
 -- ============================================================================
 
-alter table public.markers      enable row level security;
-alter table public.cycles       enable row level security;
-alter table public.observations enable row level security;
+alter table shift.markers      enable row level security;
+alter table shift.cycles       enable row level security;
+alter table shift.observations enable row level security;
 
 do $$
 declare r record;
 begin
   for r in
     select schemaname, tablename, policyname from pg_policies
-     where schemaname = 'public' and tablename in ('markers', 'cycles', 'observations')
+     where schemaname = 'shift' and tablename in ('markers', 'cycles', 'observations')
   loop
     execute format('drop policy %I on %I.%I', r.policyname, r.schemaname, r.tablename);
   end loop;
 end $$;
 
 -- Markers: design artefacts, editable by members of the organisation.
-create policy markers_select on public.markers for select to authenticated
-  using (public.is_member(org_id));
-create policy markers_insert on public.markers for insert to authenticated
-  with check (public.is_member(org_id));
-create policy markers_update on public.markers for update to authenticated
-  using (public.is_member(org_id)) with check (public.is_member(org_id));
-create policy markers_delete on public.markers for delete to authenticated
-  using (public.is_member(org_id));
+create policy markers_select on shift.markers for select to authenticated
+  using (shift.is_member(org_id));
+create policy markers_insert on shift.markers for insert to authenticated
+  with check (shift.is_member(org_id));
+create policy markers_update on shift.markers for update to authenticated
+  using (shift.is_member(org_id)) with check (shift.is_member(org_id));
+create policy markers_delete on shift.markers for delete to authenticated
+  using (shift.is_member(org_id));
 
 -- Cycles: the summary is written while the review is open, so it is updatable
 -- until it closes. The findings inside it are not (see below).
-create policy cycles_select on public.cycles for select to authenticated
-  using (public.is_member(org_id));
-create policy cycles_insert on public.cycles for insert to authenticated
-  with check (public.is_member(org_id));
-create policy cycles_update on public.cycles for update to authenticated
-  using (public.is_member(org_id)) with check (public.is_member(org_id));
+create policy cycles_select on shift.cycles for select to authenticated
+  using (shift.is_member(org_id));
+create policy cycles_insert on shift.cycles for insert to authenticated
+  with check (shift.is_member(org_id));
+create policy cycles_update on shift.cycles for update to authenticated
+  using (shift.is_member(org_id)) with check (shift.is_member(org_id));
 
 -- Observations: SELECT and INSERT only.
 --
 -- The absence of UPDATE and DELETE below is the append-only guarantee for the
 -- behaviour record. Do not add them. A correction is a new observation.
-create policy observations_select on public.observations for select to authenticated
-  using (public.is_member(org_id));
-create policy observations_insert on public.observations for insert to authenticated
-  with check (public.is_member(org_id) and by = (select auth.uid()));
+create policy observations_select on shift.observations for select to authenticated
+  using (shift.is_member(org_id));
+create policy observations_insert on shift.observations for insert to authenticated
+  with check (shift.is_member(org_id) and by = (select auth.uid()));
 
-revoke update, delete on public.observations from authenticated, anon;
+revoke update, delete on shift.observations from authenticated, anon;
 
 -- An observation must belong to the same organisation and stakeholder as the
 -- marker it scores, so a crafted insert cannot file a finding into someone
 -- else's record.
-create or replace function public.observations_consistency()
+create or replace function shift.observations_consistency()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
-declare m public.markers;
+declare m shift.markers;
 begin
-  select * into m from public.markers mk where mk.id = new.marker_id;
+  select * into m from shift.markers mk where mk.id = new.marker_id;
   if m.id is null then
     raise exception 'Unknown behaviour.';
   end if;
@@ -173,10 +173,10 @@ begin
 end;
 $$;
 
-drop trigger if exists observations_consistency_trg on public.observations;
+drop trigger if exists observations_consistency_trg on shift.observations;
 create trigger observations_consistency_trg
-  before insert on public.observations
-  for each row execute function public.observations_consistency();
+  before insert on shift.observations
+  for each row execute function shift.observations_consistency();
 
 -- ============================================================================
 -- Verify (run as a signed-in user)
@@ -184,10 +184,10 @@ create trigger observations_consistency_trg
 --
 --   -- Every new table must report true:
 --   select tablename, rowsecurity from pg_tables
---    where schemaname = 'public' and tablename in ('markers','cycles','observations');
+--    where schemaname = 'shift' and tablename in ('markers','cycles','observations');
 --
 --   -- The behaviour record cannot be rewritten. Both must ERROR:
---   update public.observations set narrative = 'tampered' where id = (select id from public.observations limit 1);
---   delete from public.observations where id = (select id from public.observations limit 1);
+--   update shift.observations set narrative = 'tampered' where id = (select id from shift.observations limit 1);
+--   delete from shift.observations where id = (select id from shift.observations limit 1);
 --
 -- ============================================================================

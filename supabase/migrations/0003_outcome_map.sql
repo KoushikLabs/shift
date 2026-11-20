@@ -11,7 +11,7 @@
 -- already exists and is already governed by the organisation's RLS, so the
 -- isolation guarantee from 0001 covers it unchanged.
 
-alter table public.projects
+alter table shift.projects
   -- Deliberately bigger than the organisation. The manual's framing: what the
   -- world looks like if you and everyone else working on this succeeds.
   add column if not exists vision text not null default '',
@@ -25,7 +25,7 @@ alter table public.projects
   -- the tool warns on a disqualifying zero and does not block.
   add column if not exists readiness jsonb;
 
-alter table public.stakeholders
+alter table shift.stakeholders
   -- Rows: strategies aimed at the actor (i) versus at their environment (e).
   -- Columns: causal, persuasive, supportive. Stored as one object because the
   -- useful reading is the shape of the whole grid, not any single cell.
@@ -40,11 +40,11 @@ alter table public.stakeholders
 -- ============================================================================
 --
 --   select column_name from information_schema.columns
---    where table_schema = 'public' and table_name = 'projects'
+--    where table_schema = 'shift' and table_name = 'projects'
 --      and column_name in ('vision','mission','vocabulary','readiness','depth');
 --
 --   select column_name from information_schema.columns
---    where table_schema = 'public' and table_name = 'stakeholders'
+--    where table_schema = 'shift' and table_name = 'stakeholders'
 --      and column_name in ('reach','reachable_via','strategy_map');
 --
 -- ============================================================================

@@ -73,7 +73,7 @@ const footer = `
 -- ============================================================================
 --
 -- IMPORTANT: the Supabase SQL editor connects as the \`postgres\` role, which
--- BYPASSES Row Level Security. A plain \`update public.changes ...\` run here
+-- BYPASSES Row Level Security. A plain \`update shift.changes ...\` run here
 -- will SUCCEED even though the guarantee is perfectly intact — it is testing
 -- the superuser, not the app. Use the checks below instead.
 
@@ -83,7 +83,7 @@ const footer = `
 -- ---------------------------------------------------------------------------
 --
 --   select tablename, rowsecurity from pg_tables
---    where schemaname = 'public'
+--    where schemaname = 'shift'
 --      and tablename in ('organisations','memberships','invites','profiles',
 --                        'projects','stakeholders','changes',
 --                        'markers','observations','cycles')
@@ -98,7 +98,7 @@ const footer = `
 -- ---------------------------------------------------------------------------
 --
 --   select tablename, cmd, policyname from pg_policies
---    where schemaname = 'public' and tablename in ('changes','observations')
+--    where schemaname = 'shift' and tablename in ('changes','observations')
 --    order by tablename, cmd;
 
 -- ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ const footer = `
 --
 --   select table_name, grantee, privilege_type
 --     from information_schema.role_table_grants
---    where table_schema = 'public'
+--    where table_schema = 'shift'
 --      and table_name in ('changes','observations')
 --      and grantee in ('authenticated','anon')
 --    order by table_name, grantee, privilege_type;
@@ -124,7 +124,7 @@ const footer = `
 --   begin;
 --     set local role authenticated;
 --     set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"authenticated"}';
---     update public.changes set rationale = 'tampered';
+--     update shift.changes set rationale = 'tampered';
 --   rollback;
 --
 -- ============================================================================

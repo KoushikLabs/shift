@@ -43,9 +43,27 @@ keep a full longitudinal record on its own machine, with you holding nothing.
 1. In the Supabase dashboard, open **SQL Editor → New query**.
 2. Paste the entire contents of **[`supabase/setup.sql`](../supabase/setup.sql)** and run it.
 
-That one file is all three migrations concatenated, and it is idempotent — running it twice changes nothing.
+That one file is all the migrations concatenated, and it is idempotent — running it twice changes nothing.
 Use the individual files in `supabase/migrations/` only when applying a change to a database that already
 exists.
+
+Shift's tables live in their own schema, **`shift`**, not `public`, so one Supabase project can host other
+tools beside it with one set of accounts. So that the app can reach them:
+
+3. Open **Project Settings → Data API → Exposed schemas**, add **`shift`**, and save.
+
+Without this the app shows `Invalid schema: shift`.
+
+### Already running Shift from before November 2026?
+
+Older installs kept the tables in `public`. Do not run `setup.sql` on them. Instead:
+
+1. Expose `shift` as above (if the dashboard will not list it yet, run `create schema if not exists shift;`
+   first).
+2. Run **[`supabase/migrations/0005_move_to_shift_schema.sql`](../supabase/migrations/0005_move_to_shift_schema.sql)**.
+   It is one transaction: if any check fails, nothing moves. Rows, policies, triggers and grants all move
+   with the tables.
+3. Deploy the current app straight away. The old build looks in `public` and cannot load data after step 2.
 
 It creates ten tables, twenty-eight Row Level Security policies and eleven functions: the isolation that keeps
 one organisation'''s data unreadable to another, and the append-only guarantee on `changes` and `observations`.
@@ -55,7 +73,7 @@ one organisation'''s data unreadable to another, and the append-only guarantee o
 Same place — **SQL Editor → New query**, paste, Run.
 
 > **The SQL editor connects as `postgres`, which bypasses Row Level Security.** That matters: a plain
-> `update public.changes ...` run there will *succeed* even when the append-only guarantee is perfectly
+> `update shift.changes ...` run there will *succeed* even when the append-only guarantee is perfectly
 > intact, because it is testing the superuser rather than the application. The checks below read the
 > catalogue instead, so they cannot give a false pass.
 
@@ -63,7 +81,7 @@ Same place — **SQL Editor → New query**, paste, Run.
 
 ```sql
 select tablename, rowsecurity from pg_tables
- where schemaname = 'public'
+ where schemaname = 'shift'
    and tablename in ('organisations','memberships','invites','profiles',
                      'projects','stakeholders','changes',
                      'markers','observations','cycles')
@@ -77,7 +95,7 @@ A single `false` means that table is readable by anyone holding the public anon 
 
 ```sql
 select tablename, cmd, policyname from pg_policies
- where schemaname = 'public' and tablename in ('changes','observations')
+ where schemaname = 'shift' and tablename in ('changes','observations')
  order by tablename, cmd;
 ```
 
@@ -86,7 +104,7 @@ select tablename, cmd, policyname from pg_policies
 ```sql
 select table_name, grantee, privilege_type
   from information_schema.role_table_grants
- where table_schema = 'public'
+ where table_schema = 'shift'
    and table_name in ('changes','observations')
    and grantee in ('authenticated','anon')
  order by table_name, grantee, privilege_type;
@@ -99,7 +117,7 @@ so it cannot alter anything even if it unexpectedly succeeds:
 begin;
   set local role authenticated;
   set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"authenticated"}';
-  update public.changes set rationale = 'tampered';
+  update shift.changes set rationale = 'tampered';
 rollback;
 ```
 
@@ -143,6 +161,10 @@ In GitHub, at **Settings → Secrets and variables → Actions**:
 |---|---|---|
 | **Variables** tab | `SUPABASE_URL` | your project URL |
 | **Secrets** tab | `SUPABASE_ANON_KEY` | your anon key |
+
+Optional, if you limit who can create an account (for example with a Supabase **Before User Created**
+hook), add a **Variables** entry `ACCESS_REQUEST_URL` with the page where people ask for access. The
+sign-up form then links to it. Leave it out and nothing is shown.
 
 Then re-run the **Deploy** workflow (Actions → Deploy → Run workflow). The next build picks them up and the
 deployed app grows a **Sign in** button.

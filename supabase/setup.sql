@@ -1,11 +1,12 @@
 -- Shift — complete database setup.
 --
 -- GENERATED FILE. Do not edit; edit supabase/migrations/*.sql and run
--- `npm run sql`. Generated 2026-09-08 from:
+-- `npm run sql`. Generated 2026-11-20 from:
 --   supabase/migrations/0001_init.sql
 --   supabase/migrations/0002_behaviour.sql
 --   supabase/migrations/0003_outcome_map.sql
 --   supabase/migrations/0004_grants.sql
+--   supabase/migrations/0005_move_to_shift_schema.sql
 --
 -- ============================================================================
 -- HOW TO USE
@@ -70,25 +71,42 @@ create extension if not exists pgcrypto with schema extensions;
 -- Read the verification block at the bottom before trusting either claim.
 
 -- ============================================================================
+-- Schema
+-- ============================================================================
+--
+-- Shift lives in its own schema, `shift`, not `public`, so it can share one
+-- Supabase project (and one set of user accounts) with other tools without
+-- their tables colliding. Two consequences:
+--
+--   * The schema must be listed under Project Settings -> Data API ->
+--     Exposed schemas, or the app gets "Invalid schema: shift".
+--   * The app asks for it explicitly: createClient(..., { db: { schema: "shift" } }).
+--
+-- keepalive() stays in `public` because it keeps the whole project awake.
+
+create schema if not exists shift;
+grant usage on schema shift to anon, authenticated, service_role;
+
+-- ============================================================================
 -- Tables
 -- ============================================================================
 
-create table if not exists public.profiles (
+create table if not exists shift.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   email       text        not null,
   display_name text       not null default '',
   created_at  timestamptz not null default now()
 );
 
-create table if not exists public.organisations (
+create table if not exists shift.organisations (
   id         uuid primary key default gen_random_uuid(),
   name       text        not null check (length(trim(name)) > 0),
   created_at timestamptz not null default now(),
   created_by uuid        references auth.users(id) on delete set null
 );
 
-create table if not exists public.memberships (
-  org_id     uuid not null references public.organisations(id) on delete cascade,
+create table if not exists shift.memberships (
+  org_id     uuid not null references shift.organisations(id) on delete cascade,
   user_id    uuid not null references auth.users(id) on delete cascade,
   role       text not null default 'member' check (role in ('admin', 'member')),
   created_at timestamptz not null default now(),
@@ -97,9 +115,9 @@ create table if not exists public.memberships (
 
 -- Invites are links, not emails. The admin copies the link and sends it however
 -- they like, which means the pilot needs no SMTP configured to add colleagues.
-create table if not exists public.invites (
+create table if not exists shift.invites (
   id          uuid primary key default gen_random_uuid(),
-  org_id      uuid not null references public.organisations(id) on delete cascade,
+  org_id      uuid not null references shift.organisations(id) on delete cascade,
   token       text not null unique,
   role        text not null default 'member' check (role in ('admin', 'member')),
   note        text not null default '',
@@ -110,9 +128,9 @@ create table if not exists public.invites (
   accepted_by uuid references auth.users(id) on delete set null
 );
 
-create table if not exists public.projects (
+create table if not exists shift.projects (
   id          uuid primary key default gen_random_uuid(),
-  org_id      uuid not null references public.organisations(id) on delete cascade,
+  org_id      uuid not null references shift.organisations(id) on delete cascade,
   name        text not null check (length(trim(name)) > 0),
   description text not null default '',
   scale_note  text not null default '',
@@ -120,10 +138,10 @@ create table if not exists public.projects (
   updated_at  timestamptz not null default now()
 );
 
-create table if not exists public.stakeholders (
+create table if not exists shift.stakeholders (
   id            uuid primary key default gen_random_uuid(),
-  org_id        uuid not null references public.organisations(id) on delete cascade,
-  project_id    uuid not null references public.projects(id) on delete cascade,
+  org_id        uuid not null references shift.organisations(id) on delete cascade,
+  project_id    uuid not null references shift.projects(id) on delete cascade,
   name          text not null check (length(trim(name)) > 0),
   type          text not null default '',
   is_individual boolean not null default false,
@@ -140,11 +158,11 @@ create table if not exists public.stakeholders (
   updated_by    uuid references auth.users(id) on delete set null
 );
 
-create table if not exists public.changes (
+create table if not exists shift.changes (
   id             uuid primary key default gen_random_uuid(),
-  org_id         uuid not null references public.organisations(id) on delete cascade,
-  project_id     uuid not null references public.projects(id) on delete cascade,
-  stakeholder_id uuid not null references public.stakeholders(id) on delete cascade,
+  org_id         uuid not null references shift.organisations(id) on delete cascade,
+  project_id     uuid not null references shift.projects(id) on delete cascade,
+  stakeholder_id uuid not null references shift.stakeholders(id) on delete cascade,
   at             timestamptz not null default now(),
   by             uuid references auth.users(id) on delete set null,
   by_email       text not null default '',
@@ -161,12 +179,12 @@ create table if not exists public.changes (
   changed_fields text[] not null
 );
 
-create index if not exists memberships_user_idx   on public.memberships (user_id);
-create index if not exists projects_org_idx       on public.projects (org_id);
-create index if not exists stakeholders_proj_idx  on public.stakeholders (project_id);
-create index if not exists changes_proj_idx       on public.changes (project_id);
-create index if not exists changes_stakeholder_idx on public.changes (stakeholder_id, at);
-create index if not exists invites_token_idx      on public.invites (token);
+create index if not exists memberships_user_idx   on shift.memberships (user_id);
+create index if not exists projects_org_idx       on shift.projects (org_id);
+create index if not exists stakeholders_proj_idx  on shift.stakeholders (project_id);
+create index if not exists changes_proj_idx       on shift.changes (project_id);
+create index if not exists changes_stakeholder_idx on shift.changes (stakeholder_id, at);
+create index if not exists invites_token_idx      on shift.invites (token);
 
 -- ============================================================================
 -- Membership lookup
@@ -180,7 +198,7 @@ create index if not exists invites_token_idx      on public.invites (token);
 -- them a caller can put a malicious schema ahead of public on the search path
 -- and have this function call their table instead.
 
-create or replace function public.is_member(org uuid)
+create or replace function shift.is_member(org uuid)
 returns boolean
 language sql
 security definer
@@ -188,12 +206,12 @@ stable
 set search_path = ''
 as $$
   select exists (
-    select 1 from public.memberships m
+    select 1 from shift.memberships m
     where m.org_id = org and m.user_id = (select auth.uid())
   );
 $$;
 
-create or replace function public.is_admin(org uuid)
+create or replace function shift.is_admin(org uuid)
 returns boolean
 language sql
 security definer
@@ -201,28 +219,28 @@ stable
 set search_path = ''
 as $$
   select exists (
-    select 1 from public.memberships m
+    select 1 from shift.memberships m
     where m.org_id = org and m.user_id = (select auth.uid()) and m.role = 'admin'
   );
 $$;
 
-revoke all on function public.is_member(uuid) from public;
-revoke all on function public.is_admin(uuid) from public;
-grant execute on function public.is_member(uuid) to authenticated;
-grant execute on function public.is_admin(uuid) to authenticated;
+revoke all on function shift.is_member(uuid) from public;
+revoke all on function shift.is_admin(uuid) from public;
+grant execute on function shift.is_member(uuid) to authenticated;
+grant execute on function shift.is_admin(uuid) to authenticated;
 
 -- ============================================================================
 -- New users get a profile row automatically
 -- ============================================================================
 
-create or replace function public.handle_new_user()
+create or replace function shift.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, email, display_name)
+  insert into shift.profiles (id, email, display_name)
   values (
     new.id,
     coalesce(new.email, ''),
@@ -236,7 +254,7 @@ $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute function public.handle_new_user();
+  for each row execute function shift.handle_new_user();
 
 -- ============================================================================
 -- Creating an organisation, and joining one
@@ -248,7 +266,7 @@ create trigger on_auth_user_created
 -- could insert into `memberships` directly, anyone could add themselves to any
 -- organisation — which is the entire security model, undone.
 
-create or replace function public.create_organisation(org_name text)
+create or replace function shift.create_organisation(org_name text)
 returns uuid
 language plpgsql
 security definer
@@ -265,18 +283,18 @@ begin
     raise exception 'An organisation needs a name.';
   end if;
 
-  insert into public.organisations (name, created_by)
+  insert into shift.organisations (name, created_by)
   values (trim(org_name), uid)
   returning id into new_id;
 
-  insert into public.memberships (org_id, user_id, role)
+  insert into shift.memberships (org_id, user_id, role)
   values (new_id, uid, 'admin');
 
   return new_id;
 end;
 $$;
 
-create or replace function public.create_invite(org uuid, invite_role text default 'member', invite_note text default '')
+create or replace function shift.create_invite(org uuid, invite_role text default 'member', invite_note text default '')
 returns text
 language plpgsql
 security definer
@@ -285,7 +303,7 @@ as $$
 declare
   new_token text;
 begin
-  if not public.is_admin(org) then
+  if not shift.is_admin(org) then
     raise exception 'Only an admin of this organisation can invite people.';
   end if;
   if invite_role not in ('admin', 'member') then
@@ -294,7 +312,7 @@ begin
 
   new_token := encode(extensions.gen_random_bytes(24), 'hex');
 
-  insert into public.invites (org_id, token, role, note, created_by)
+  insert into shift.invites (org_id, token, role, note, created_by)
   values (org, new_token, invite_role, coalesce(invite_note, ''), (select auth.uid()));
 
   return new_token;
@@ -303,22 +321,22 @@ $$;
 
 -- Look at an invite before accepting it, without being a member yet. Returns
 -- only the organisation's name — never its contents.
-create or replace function public.peek_invite(invite_token text)
+create or replace function shift.peek_invite(invite_token text)
 returns table (org_name text, org_role text, valid boolean, reason text)
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  inv public.invites;
-  org public.organisations;
+  inv shift.invites;
+  org shift.organisations;
 begin
-  select * into inv from public.invites i where i.token = invite_token;
+  select * into inv from shift.invites i where i.token = invite_token;
   if inv.id is null then
     return query select ''::text, ''::text, false, 'That invite link is not valid.'::text;
     return;
   end if;
-  select * into org from public.organisations o where o.id = inv.org_id;
+  select * into org from shift.organisations o where o.id = inv.org_id;
   if inv.accepted_at is not null then
     return query select org.name, inv.role, false, 'That invite has already been used.'::text;
     return;
@@ -331,21 +349,21 @@ begin
 end;
 $$;
 
-create or replace function public.accept_invite(invite_token text)
+create or replace function shift.accept_invite(invite_token text)
 returns uuid
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  inv public.invites;
+  inv shift.invites;
   uid uuid := (select auth.uid());
 begin
   if uid is null then
     raise exception 'You must be signed in to accept an invite.';
   end if;
 
-  select * into inv from public.invites i
+  select * into inv from shift.invites i
     where i.token = invite_token
       and i.accepted_at is null
       and i.expires_at > now()
@@ -355,11 +373,11 @@ begin
     raise exception 'That invite link is not valid, has already been used, or has expired.';
   end if;
 
-  insert into public.memberships (org_id, user_id, role)
+  insert into shift.memberships (org_id, user_id, role)
   values (inv.org_id, uid, inv.role)
   on conflict (org_id, user_id) do nothing;
 
-  update public.invites
+  update shift.invites
      set accepted_at = now(), accepted_by = uid
    where id = inv.id;
 
@@ -369,7 +387,7 @@ $$;
 
 -- Leaving, and removing someone. An organisation must never be left with no
 -- admin, or nobody can ever invite anyone again.
-create or replace function public.remove_member(org uuid, member uuid)
+create or replace function shift.remove_member(org uuid, member uuid)
 returns void
 language plpgsql
 security definer
@@ -379,47 +397,47 @@ declare
   uid uuid := (select auth.uid());
   admin_count int;
 begin
-  if member <> uid and not public.is_admin(org) then
+  if member <> uid and not shift.is_admin(org) then
     raise exception 'Only an admin can remove another member.';
   end if;
 
   select count(*) into admin_count
-    from public.memberships m where m.org_id = org and m.role = 'admin';
+    from shift.memberships m where m.org_id = org and m.role = 'admin';
 
   if admin_count <= 1 and exists (
-    select 1 from public.memberships m
+    select 1 from shift.memberships m
      where m.org_id = org and m.user_id = member and m.role = 'admin'
   ) then
     raise exception 'This is the only admin. Make someone else an admin first.';
   end if;
 
-  delete from public.memberships m where m.org_id = org and m.user_id = member;
+  delete from shift.memberships m where m.org_id = org and m.user_id = member;
 end;
 $$;
 
-revoke all on function public.create_organisation(text) from public;
-revoke all on function public.create_invite(uuid, text, text) from public;
-revoke all on function public.accept_invite(text) from public;
-revoke all on function public.remove_member(uuid, uuid) from public;
-grant execute on function public.create_organisation(text) to authenticated;
-grant execute on function public.create_invite(uuid, text, text) to authenticated;
-grant execute on function public.accept_invite(text) to authenticated;
-grant execute on function public.remove_member(uuid, uuid) to authenticated;
+revoke all on function shift.create_organisation(text) from public;
+revoke all on function shift.create_invite(uuid, text, text) from public;
+revoke all on function shift.accept_invite(text) from public;
+revoke all on function shift.remove_member(uuid, uuid) from public;
+grant execute on function shift.create_organisation(text) to authenticated;
+grant execute on function shift.create_invite(uuid, text, text) to authenticated;
+grant execute on function shift.accept_invite(text) to authenticated;
+grant execute on function shift.remove_member(uuid, uuid) to authenticated;
 -- peek_invite is deliberately callable before joining, so the accept screen can
 -- name the organisation. It returns a name and nothing else.
-grant execute on function public.peek_invite(text) to authenticated, anon;
+grant execute on function shift.peek_invite(text) to authenticated, anon;
 
 -- ============================================================================
 -- Row Level Security
 -- ============================================================================
 
-alter table public.profiles      enable row level security;
-alter table public.organisations enable row level security;
-alter table public.memberships   enable row level security;
-alter table public.invites       enable row level security;
-alter table public.projects      enable row level security;
-alter table public.stakeholders  enable row level security;
-alter table public.changes       enable row level security;
+alter table shift.profiles      enable row level security;
+alter table shift.organisations enable row level security;
+alter table shift.memberships   enable row level security;
+alter table shift.invites       enable row level security;
+alter table shift.projects      enable row level security;
+alter table shift.stakeholders  enable row level security;
+alter table shift.changes       enable row level security;
 
 -- Re-running this file should not fail on existing policies.
 do $$
@@ -427,7 +445,7 @@ declare r record;
 begin
   for r in
     select schemaname, tablename, policyname from pg_policies
-     where schemaname = 'public'
+     where schemaname = 'shift'
        and tablename in ('profiles','organisations','memberships','invites','projects','stakeholders','changes')
   loop
     execute format('drop policy %I on %I.%I', r.policyname, r.schemaname, r.tablename);
@@ -435,81 +453,81 @@ begin
 end $$;
 
 -- profiles: your own, plus anyone who shares an organisation with you.
-create policy profiles_select on public.profiles for select to authenticated
+create policy profiles_select on shift.profiles for select to authenticated
   using (
     id = (select auth.uid())
     or exists (
-      select 1 from public.memberships mine
-      join public.memberships theirs on theirs.org_id = mine.org_id
-      where mine.user_id = (select auth.uid()) and theirs.user_id = public.profiles.id
+      select 1 from shift.memberships mine
+      join shift.memberships theirs on theirs.org_id = mine.org_id
+      where mine.user_id = (select auth.uid()) and theirs.user_id = shift.profiles.id
     )
   );
-create policy profiles_update on public.profiles for update to authenticated
+create policy profiles_update on shift.profiles for update to authenticated
   using (id = (select auth.uid())) with check (id = (select auth.uid()));
 
 -- organisations: visible to members. Created only through create_organisation().
-create policy organisations_select on public.organisations for select to authenticated
-  using (public.is_member(id));
-create policy organisations_update on public.organisations for update to authenticated
-  using (public.is_admin(id)) with check (public.is_admin(id));
-create policy organisations_delete on public.organisations for delete to authenticated
-  using (public.is_admin(id));
+create policy organisations_select on shift.organisations for select to authenticated
+  using (shift.is_member(id));
+create policy organisations_update on shift.organisations for update to authenticated
+  using (shift.is_admin(id)) with check (shift.is_admin(id));
+create policy organisations_delete on shift.organisations for delete to authenticated
+  using (shift.is_admin(id));
 
 -- memberships: readable within your organisations. No INSERT policy — joining
 -- happens only via accept_invite(), so nobody can add themselves anywhere.
-create policy memberships_select on public.memberships for select to authenticated
-  using (public.is_member(org_id));
-create policy memberships_update on public.memberships for update to authenticated
-  using (public.is_admin(org_id)) with check (public.is_admin(org_id));
+create policy memberships_select on shift.memberships for select to authenticated
+  using (shift.is_member(org_id));
+create policy memberships_update on shift.memberships for update to authenticated
+  using (shift.is_admin(org_id)) with check (shift.is_admin(org_id));
 
 -- invites: admins manage them. Accepting goes through accept_invite().
-create policy invites_select on public.invites for select to authenticated
-  using (public.is_admin(org_id));
-create policy invites_delete on public.invites for delete to authenticated
-  using (public.is_admin(org_id));
+create policy invites_select on shift.invites for select to authenticated
+  using (shift.is_admin(org_id));
+create policy invites_delete on shift.invites for delete to authenticated
+  using (shift.is_admin(org_id));
 
 -- The working data. One rule, applied everywhere: you must belong to the org.
-create policy projects_select on public.projects for select to authenticated
-  using (public.is_member(org_id));
-create policy projects_insert on public.projects for insert to authenticated
-  with check (public.is_member(org_id));
-create policy projects_update on public.projects for update to authenticated
-  using (public.is_member(org_id)) with check (public.is_member(org_id));
-create policy projects_delete on public.projects for delete to authenticated
-  using (public.is_member(org_id));
+create policy projects_select on shift.projects for select to authenticated
+  using (shift.is_member(org_id));
+create policy projects_insert on shift.projects for insert to authenticated
+  with check (shift.is_member(org_id));
+create policy projects_update on shift.projects for update to authenticated
+  using (shift.is_member(org_id)) with check (shift.is_member(org_id));
+create policy projects_delete on shift.projects for delete to authenticated
+  using (shift.is_member(org_id));
 
-create policy stakeholders_select on public.stakeholders for select to authenticated
-  using (public.is_member(org_id));
-create policy stakeholders_insert on public.stakeholders for insert to authenticated
-  with check (public.is_member(org_id));
-create policy stakeholders_update on public.stakeholders for update to authenticated
-  using (public.is_member(org_id)) with check (public.is_member(org_id));
-create policy stakeholders_delete on public.stakeholders for delete to authenticated
-  using (public.is_member(org_id));
+create policy stakeholders_select on shift.stakeholders for select to authenticated
+  using (shift.is_member(org_id));
+create policy stakeholders_insert on shift.stakeholders for insert to authenticated
+  with check (shift.is_member(org_id));
+create policy stakeholders_update on shift.stakeholders for update to authenticated
+  using (shift.is_member(org_id)) with check (shift.is_member(org_id));
+create policy stakeholders_delete on shift.stakeholders for delete to authenticated
+  using (shift.is_member(org_id));
 
 -- changes: SELECT and INSERT only.
 --
 -- The absence of UPDATE and DELETE policies below is the append-only guarantee.
 -- Do not add them. A correction is a new row, exactly as SPEC 5 says.
-create policy changes_select on public.changes for select to authenticated
-  using (public.is_member(org_id));
-create policy changes_insert on public.changes for insert to authenticated
-  with check (public.is_member(org_id) and by = (select auth.uid()));
+create policy changes_select on shift.changes for select to authenticated
+  using (shift.is_member(org_id));
+create policy changes_insert on shift.changes for insert to authenticated
+  with check (shift.is_member(org_id) and by = (select auth.uid()));
 
 -- Belt and braces: even a future policy added by mistake cannot rewrite history.
-revoke update, delete on public.changes from authenticated, anon;
+revoke update, delete on shift.changes from authenticated, anon;
 
 -- A change must point at a stakeholder in the same organisation, so a crafted
 -- insert cannot file a record into someone else's history.
-create or replace function public.changes_consistency()
+create or replace function shift.changes_consistency()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
-declare s public.stakeholders;
+declare s shift.stakeholders;
 begin
-  select * into s from public.stakeholders st where st.id = new.stakeholder_id;
+  select * into s from shift.stakeholders st where st.id = new.stakeholder_id;
   if s.id is null then
     raise exception 'Unknown stakeholder.';
   end if;
@@ -520,10 +538,10 @@ begin
 end;
 $$;
 
-drop trigger if exists changes_consistency_trg on public.changes;
+drop trigger if exists changes_consistency_trg on shift.changes;
 create trigger changes_consistency_trg
-  before insert on public.changes
-  for each row execute function public.changes_consistency();
+  before insert on shift.changes
+  for each row execute function shift.changes_consistency();
 
 -- ============================================================================
 -- Keep-alive
@@ -551,12 +569,12 @@ grant execute on function public.keepalive() to anon, authenticated;
 -- ============================================================================
 --
 --   -- 1. No row from an organisation you do not belong to is visible:
---   select count(*) from public.stakeholders
---    where org_id not in (select org_id from public.memberships where user_id = auth.uid());
+--   select count(*) from shift.stakeholders
+--    where org_id not in (select org_id from shift.memberships where user_id = auth.uid());
 --
 --   -- 2. History cannot be rewritten. Both of these must ERROR:
---   update public.changes set rationale = 'tampered' where id = (select id from public.changes limit 1);
---   delete from public.changes where id = (select id from public.changes limit 1);
+--   update shift.changes set rationale = 'tampered' where id = (select id from shift.changes limit 1);
+--   delete from shift.changes where id = (select id from shift.changes limit 1);
 --
 -- ============================================================================
 
@@ -594,10 +612,10 @@ grant execute on function public.keepalive() to anon, authenticated;
 -- Existing tables
 -- ============================================================================
 
-alter table public.projects
+alter table shift.projects
   add column if not exists depth int not null default 1 check (depth between 1 and 3);
 
-alter table public.stakeholders
+alter table shift.stakeholders
   add column if not exists reach text not null default 'partner'
     check (reach in ('partner', 'target', 'out-of-reach')),
   -- Who can reach an actor we cannot. One hop, for the manual's own instruction
@@ -609,11 +627,11 @@ alter table public.stakeholders
 -- New tables
 -- ============================================================================
 
-create table if not exists public.markers (
+create table if not exists shift.markers (
   id             uuid primary key default gen_random_uuid(),
-  org_id         uuid not null references public.organisations(id) on delete cascade,
-  project_id     uuid not null references public.projects(id) on delete cascade,
-  stakeholder_id uuid not null references public.stakeholders(id) on delete cascade,
+  org_id         uuid not null references shift.organisations(id) on delete cascade,
+  project_id     uuid not null references shift.projects(id) on delete cascade,
+  stakeholder_id uuid not null references shift.stakeholders(id) on delete cascade,
   -- A gerund phrase naming one observable act. Form is checked in the client,
   -- where it can warn rather than refuse: every rule is a heuristic over free
   -- text and a false positive that blocks would get the check switched off.
@@ -627,10 +645,10 @@ create table if not exists public.markers (
   retired_at     timestamptz
 );
 
-create table if not exists public.cycles (
+create table if not exists shift.cycles (
   id                   uuid primary key default gen_random_uuid(),
-  org_id               uuid not null references public.organisations(id) on delete cascade,
-  project_id           uuid not null references public.projects(id) on delete cascade,
+  org_id               uuid not null references shift.organisations(id) on delete cascade,
+  project_id           uuid not null references shift.projects(id) on delete cascade,
   label                text not null default '',
   opened_at            timestamptz not null default now(),
   closed_at            timestamptz,
@@ -642,13 +660,13 @@ create table if not exists public.cycles (
   map_changes_proposed text not null default ''
 );
 
-create table if not exists public.observations (
+create table if not exists shift.observations (
   id             uuid primary key default gen_random_uuid(),
-  org_id         uuid not null references public.organisations(id) on delete cascade,
-  project_id     uuid not null references public.projects(id) on delete cascade,
-  stakeholder_id uuid not null references public.stakeholders(id) on delete cascade,
-  marker_id      uuid not null references public.markers(id) on delete cascade,
-  cycle_id       uuid references public.cycles(id) on delete set null,
+  org_id         uuid not null references shift.organisations(id) on delete cascade,
+  project_id     uuid not null references shift.projects(id) on delete cascade,
+  stakeholder_id uuid not null references shift.stakeholders(id) on delete cascade,
+  marker_id      uuid not null references shift.markers(id) on delete cascade,
+  cycle_id       uuid references shift.cycles(id) on delete set null,
   at             timestamptz not null default now(),
   by             uuid references auth.users(id) on delete set null,
   by_email       text not null default '',
@@ -663,73 +681,73 @@ create table if not exists public.observations (
   significance   text not null default ''
 );
 
-create index if not exists markers_project_idx      on public.markers (project_id);
-create index if not exists markers_stakeholder_idx  on public.markers (stakeholder_id);
-create index if not exists cycles_project_idx       on public.cycles (project_id, opened_at desc);
-create index if not exists observations_project_idx on public.observations (project_id);
-create index if not exists observations_marker_idx  on public.observations (marker_id, at desc);
+create index if not exists markers_project_idx      on shift.markers (project_id);
+create index if not exists markers_stakeholder_idx  on shift.markers (stakeholder_id);
+create index if not exists cycles_project_idx       on shift.cycles (project_id, opened_at desc);
+create index if not exists observations_project_idx on shift.observations (project_id);
+create index if not exists observations_marker_idx  on shift.observations (marker_id, at desc);
 
 -- ============================================================================
 -- Row Level Security
 -- ============================================================================
 
-alter table public.markers      enable row level security;
-alter table public.cycles       enable row level security;
-alter table public.observations enable row level security;
+alter table shift.markers      enable row level security;
+alter table shift.cycles       enable row level security;
+alter table shift.observations enable row level security;
 
 do $$
 declare r record;
 begin
   for r in
     select schemaname, tablename, policyname from pg_policies
-     where schemaname = 'public' and tablename in ('markers', 'cycles', 'observations')
+     where schemaname = 'shift' and tablename in ('markers', 'cycles', 'observations')
   loop
     execute format('drop policy %I on %I.%I', r.policyname, r.schemaname, r.tablename);
   end loop;
 end $$;
 
 -- Markers: design artefacts, editable by members of the organisation.
-create policy markers_select on public.markers for select to authenticated
-  using (public.is_member(org_id));
-create policy markers_insert on public.markers for insert to authenticated
-  with check (public.is_member(org_id));
-create policy markers_update on public.markers for update to authenticated
-  using (public.is_member(org_id)) with check (public.is_member(org_id));
-create policy markers_delete on public.markers for delete to authenticated
-  using (public.is_member(org_id));
+create policy markers_select on shift.markers for select to authenticated
+  using (shift.is_member(org_id));
+create policy markers_insert on shift.markers for insert to authenticated
+  with check (shift.is_member(org_id));
+create policy markers_update on shift.markers for update to authenticated
+  using (shift.is_member(org_id)) with check (shift.is_member(org_id));
+create policy markers_delete on shift.markers for delete to authenticated
+  using (shift.is_member(org_id));
 
 -- Cycles: the summary is written while the review is open, so it is updatable
 -- until it closes. The findings inside it are not (see below).
-create policy cycles_select on public.cycles for select to authenticated
-  using (public.is_member(org_id));
-create policy cycles_insert on public.cycles for insert to authenticated
-  with check (public.is_member(org_id));
-create policy cycles_update on public.cycles for update to authenticated
-  using (public.is_member(org_id)) with check (public.is_member(org_id));
+create policy cycles_select on shift.cycles for select to authenticated
+  using (shift.is_member(org_id));
+create policy cycles_insert on shift.cycles for insert to authenticated
+  with check (shift.is_member(org_id));
+create policy cycles_update on shift.cycles for update to authenticated
+  using (shift.is_member(org_id)) with check (shift.is_member(org_id));
 
 -- Observations: SELECT and INSERT only.
 --
 -- The absence of UPDATE and DELETE below is the append-only guarantee for the
 -- behaviour record. Do not add them. A correction is a new observation.
-create policy observations_select on public.observations for select to authenticated
-  using (public.is_member(org_id));
-create policy observations_insert on public.observations for insert to authenticated
-  with check (public.is_member(org_id) and by = (select auth.uid()));
+create policy observations_select on shift.observations for select to authenticated
+  using (shift.is_member(org_id));
+create policy observations_insert on shift.observations for insert to authenticated
+  with check (shift.is_member(org_id) and by = (select auth.uid()));
 
-revoke update, delete on public.observations from authenticated, anon;
+revoke update, delete on shift.observations from authenticated, anon;
 
 -- An observation must belong to the same organisation and stakeholder as the
 -- marker it scores, so a crafted insert cannot file a finding into someone
 -- else's record.
-create or replace function public.observations_consistency()
+create or replace function shift.observations_consistency()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
-declare m public.markers;
+declare m shift.markers;
 begin
-  select * into m from public.markers mk where mk.id = new.marker_id;
+  select * into m from shift.markers mk where mk.id = new.marker_id;
   if m.id is null then
     raise exception 'Unknown behaviour.';
   end if;
@@ -740,10 +758,10 @@ begin
 end;
 $$;
 
-drop trigger if exists observations_consistency_trg on public.observations;
+drop trigger if exists observations_consistency_trg on shift.observations;
 create trigger observations_consistency_trg
-  before insert on public.observations
-  for each row execute function public.observations_consistency();
+  before insert on shift.observations
+  for each row execute function shift.observations_consistency();
 
 -- ============================================================================
 -- Verify (run as a signed-in user)
@@ -751,11 +769,11 @@ create trigger observations_consistency_trg
 --
 --   -- Every new table must report true:
 --   select tablename, rowsecurity from pg_tables
---    where schemaname = 'public' and tablename in ('markers','cycles','observations');
+--    where schemaname = 'shift' and tablename in ('markers','cycles','observations');
 --
 --   -- The behaviour record cannot be rewritten. Both must ERROR:
---   update public.observations set narrative = 'tampered' where id = (select id from public.observations limit 1);
---   delete from public.observations where id = (select id from public.observations limit 1);
+--   update shift.observations set narrative = 'tampered' where id = (select id from shift.observations limit 1);
+--   delete from shift.observations where id = (select id from shift.observations limit 1);
 --
 -- ============================================================================
 
@@ -777,7 +795,7 @@ create trigger observations_consistency_trg
 -- already exists and is already governed by the organisation's RLS, so the
 -- isolation guarantee from 0001 covers it unchanged.
 
-alter table public.projects
+alter table shift.projects
   -- Deliberately bigger than the organisation. The manual's framing: what the
   -- world looks like if you and everyone else working on this succeeds.
   add column if not exists vision text not null default '',
@@ -791,7 +809,7 @@ alter table public.projects
   -- the tool warns on a disqualifying zero and does not block.
   add column if not exists readiness jsonb;
 
-alter table public.stakeholders
+alter table shift.stakeholders
   -- Rows: strategies aimed at the actor (i) versus at their environment (e).
   -- Columns: causal, persuasive, supportive. Stored as one object because the
   -- useful reading is the shape of the whole grid, not any single cell.
@@ -806,11 +824,11 @@ alter table public.stakeholders
 -- ============================================================================
 --
 --   select column_name from information_schema.columns
---    where table_schema = 'public' and table_name = 'projects'
+--    where table_schema = 'shift' and table_name = 'projects'
 --      and column_name in ('vision','mission','vocabulary','readiness','depth');
 --
 --   select column_name from information_schema.columns
---    where table_schema = 'public' and table_name = 'stakeholders'
+--    where table_schema = 'shift' and table_name = 'stakeholders'
 --      and column_name in ('reach','reachable_via','strategy_map');
 --
 -- ============================================================================
@@ -855,22 +873,22 @@ alter table public.stakeholders
 -- it, and the only thing anon needs is execute on peek_invite() and
 -- keepalive(), both granted in earlier migrations.
 
-grant usage on schema public to anon, authenticated;
+grant usage on schema shift to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Start from nothing, for both roles, on every table this schema owns.
 -- ---------------------------------------------------------------------------
 
-revoke all on public.profiles      from anon, authenticated;
-revoke all on public.organisations from anon, authenticated;
-revoke all on public.memberships   from anon, authenticated;
-revoke all on public.invites       from anon, authenticated;
-revoke all on public.projects      from anon, authenticated;
-revoke all on public.stakeholders  from anon, authenticated;
-revoke all on public.changes       from anon, authenticated;
-revoke all on public.markers       from anon, authenticated;
-revoke all on public.cycles        from anon, authenticated;
-revoke all on public.observations  from anon, authenticated;
+revoke all on shift.profiles      from anon, authenticated;
+revoke all on shift.organisations from anon, authenticated;
+revoke all on shift.memberships   from anon, authenticated;
+revoke all on shift.invites       from anon, authenticated;
+revoke all on shift.projects      from anon, authenticated;
+revoke all on shift.stakeholders  from anon, authenticated;
+revoke all on shift.changes       from anon, authenticated;
+revoke all on shift.markers       from anon, authenticated;
+revoke all on shift.cycles        from anon, authenticated;
+revoke all on shift.observations  from anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Grant back exactly what the policies need. Each line matches the policies
@@ -879,27 +897,27 @@ revoke all on public.observations  from anon, authenticated;
 -- ---------------------------------------------------------------------------
 
 -- Your own profile, and the profiles of people you share an organisation with.
-grant select, update on public.profiles to authenticated;
+grant select, update on shift.profiles to authenticated;
 
 -- Organisations are created through create_organisation(), which is SECURITY
 -- DEFINER, so no INSERT privilege is needed or wanted here.
-grant select, update, delete on public.organisations to authenticated;
+grant select, update, delete on shift.organisations to authenticated;
 
 -- Joining happens only through accept_invite(). No INSERT: if clients could
 -- write this table, anyone could add themselves to any organisation, which is
 -- the entire isolation model undone.
-grant select, update on public.memberships to authenticated;
+grant select, update on shift.memberships to authenticated;
 
 -- Invites are minted by create_invite(). Admins can list and revoke them.
-grant select, delete on public.invites to authenticated;
+grant select, delete on shift.invites to authenticated;
 
 -- The working data.
-grant select, insert, update, delete on public.projects     to authenticated;
-grant select, insert, update, delete on public.stakeholders to authenticated;
-grant select, insert, update, delete on public.markers      to authenticated;
+grant select, insert, update, delete on shift.projects     to authenticated;
+grant select, insert, update, delete on shift.stakeholders to authenticated;
+grant select, insert, update, delete on shift.markers      to authenticated;
 
 -- A cycle's summary is editable while the review is open.
-grant select, insert, update on public.cycles to authenticated;
+grant select, insert, update on shift.cycles to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- The append-only tables. SELECT and INSERT, and deliberately nothing else.
@@ -910,14 +928,14 @@ grant select, insert, update on public.cycles to authenticated;
 -- should not be enough to lose it.
 -- ---------------------------------------------------------------------------
 
-grant select, insert on public.changes      to authenticated;
-grant select, insert on public.observations to authenticated;
+grant select, insert on shift.changes      to authenticated;
+grant select, insert on shift.observations to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- And make sure future tables do not inherit a blanket grant behind our backs.
 -- ---------------------------------------------------------------------------
 
-alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema shift revoke all on tables from anon;
 
 -- ============================================================================
 -- VERIFY — this is the query that actually answers the question
@@ -928,12 +946,12 @@ alter default privileges in schema public revoke all on tables from anon;
 -- effective privilege and is the one to trust.
 --
 --   select t.tablename,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'SELECT') as sel,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'INSERT') as ins,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'UPDATE') as upd,
---          has_table_privilege('authenticated', 'public.'||t.tablename, 'DELETE') as del
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'SELECT') as sel,
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'INSERT') as ins,
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'UPDATE') as upd,
+--          has_table_privilege('authenticated', 'shift.'||t.tablename, 'DELETE') as del
 --     from pg_tables t
---    where t.schemaname = 'public'
+--    where t.schemaname = 'shift'
 --      and t.tablename in ('profiles','organisations','memberships','invites',
 --                          'projects','stakeholders','changes',
 --                          'markers','cycles','observations')
@@ -955,12 +973,114 @@ alter default privileges in schema public revoke all on tables from anon;
 -- ============================================================================
 
 
+-- ==========================================================================
+-- 0005_move_to_shift_schema.sql
+-- ==========================================================================
+
+-- Shift — move an existing install from `public` into the `shift` schema.
+--
+-- Only for a database set up before November 2026, when Shift's tables lived
+-- in `public`. A new install already creates everything in `shift` (0001) and
+-- this file then does nothing, so it is safe inside setup.sql.
+--
+-- On an existing install, run THIS FILE ONLY (not setup.sql), in this order:
+--
+--   1. Project Settings -> Data API -> Exposed schemas: add `shift`.
+--      (Create the empty schema first if the dashboard will not list it:
+--       `create schema if not exists shift;`)
+--   2. Run this file. It is one transaction: if anything fails, nothing moves.
+--   3. Deploy the app build that asks for schema `shift`.
+--      Between 2 and 3 the live app cannot load data, so do them together.
+--
+-- What moves: the 10 tables and 10 functions. A moved table keeps its rows,
+-- indexes, constraints, triggers, Row Level Security policies and grants.
+-- Policies and triggers point at functions by internal id, so they follow.
+-- Function bodies name their tables as `public.x` (they run with an empty
+-- search_path on purpose), so each body is rewritten `public.` -> `shift.`
+-- from its live definition and then checked.
+--
+-- keepalive() stays in `public`: it keeps the whole project awake.
+
+begin;
+
+create schema if not exists shift;
+grant usage on schema shift to anon, authenticated, service_role;
+
+do $$
+declare
+  t text;
+  f record;
+  def text;
+  tables constant text[] := array['profiles','organisations','memberships','invites','projects',
+                                  'stakeholders','changes','markers','cycles','observations'];
+  funcs constant text[] := array['is_member(uuid)','is_admin(uuid)','handle_new_user()',
+                                 'create_organisation(text)','create_invite(uuid, text, text)',
+                                 'peek_invite(text)','accept_invite(text)','remove_member(uuid, uuid)',
+                                 'changes_consistency()','observations_consistency()'];
+  in_public int;
+  in_shift int;
+begin
+  select count(*) into in_public from pg_tables where schemaname = 'public' and tablename = any (tables);
+  select count(*) into in_shift  from pg_tables where schemaname = 'shift'  and tablename = any (tables);
+
+  if in_public = 0 then
+    raise notice 'Shift is not in public. Nothing to move.';
+    return;
+  end if;
+  if in_shift > 0 then
+    raise exception 'Shift tables exist in both public and shift. Stop and check by hand; nothing has been changed.';
+  end if;
+  if in_public <> 10 then
+    raise exception 'Expected 10 Shift tables in public, found %. Nothing has been changed.', in_public;
+  end if;
+
+  foreach t in array tables loop
+    execute format('alter table public.%I set schema shift', t);
+  end loop;
+  foreach t in array funcs loop
+    execute 'alter function public.' || t || ' set schema shift';
+  end loop;
+
+  -- Rewrite the bodies. CREATE OR REPLACE keeps each function's id, owner,
+  -- grants and SECURITY DEFINER / search_path settings.
+  for f in select p.oid from pg_proc p where p.pronamespace = 'shift'::regnamespace loop
+    def := pg_get_functiondef(f.oid);
+    if position('public.' in def) > 0 then
+      execute replace(def, 'public.', 'shift.');
+    end if;
+  end loop;
+
+  -- Checks. Any failure undoes the whole file.
+  for f in select p.oid, p.proname from pg_proc p where p.pronamespace = 'shift'::regnamespace loop
+    if position('public.' in pg_get_functiondef(f.oid)) > 0 then
+      raise exception 'shift.% still refers to public. Nothing has been changed.', f.proname;
+    end if;
+  end loop;
+  if (select count(*) from pg_tables where schemaname = 'shift' and tablename = any (tables)) <> 10 then
+    raise exception 'Expected 10 tables in shift. Nothing has been changed.';
+  end if;
+  if (select count(*) from pg_proc where pronamespace = 'shift'::regnamespace) <> 10 then
+    raise exception 'Expected 10 functions in shift. Nothing has been changed.';
+  end if;
+
+  raise notice 'Shift moved to schema shift.';
+end $$;
+
+-- Same rule 0004 sets: future tables here never get a blanket grant to anon.
+alter default privileges in schema shift revoke all on tables from anon;
+
+commit;
+
+-- Tell the API to pick up the new layout straight away.
+notify pgrst, 'reload schema';
+
+
 -- ============================================================================
 -- VERIFICATION — run this in the SQL editor after the above
 -- ============================================================================
 --
 -- IMPORTANT: the Supabase SQL editor connects as the `postgres` role, which
--- BYPASSES Row Level Security. A plain `update public.changes ...` run here
+-- BYPASSES Row Level Security. A plain `update shift.changes ...` run here
 -- will SUCCEED even though the guarantee is perfectly intact — it is testing
 -- the superuser, not the app. Use the checks below instead.
 
@@ -970,7 +1090,7 @@ alter default privileges in schema public revoke all on tables from anon;
 -- ---------------------------------------------------------------------------
 --
 --   select tablename, rowsecurity from pg_tables
---    where schemaname = 'public'
+--    where schemaname = 'shift'
 --      and tablename in ('organisations','memberships','invites','profiles',
 --                        'projects','stakeholders','changes',
 --                        'markers','observations','cycles')
@@ -985,7 +1105,7 @@ alter default privileges in schema public revoke all on tables from anon;
 -- ---------------------------------------------------------------------------
 --
 --   select tablename, cmd, policyname from pg_policies
---    where schemaname = 'public' and tablename in ('changes','observations')
+--    where schemaname = 'shift' and tablename in ('changes','observations')
 --    order by tablename, cmd;
 
 -- ---------------------------------------------------------------------------
@@ -995,7 +1115,7 @@ alter default privileges in schema public revoke all on tables from anon;
 --
 --   select table_name, grantee, privilege_type
 --     from information_schema.role_table_grants
---    where table_schema = 'public'
+--    where table_schema = 'shift'
 --      and table_name in ('changes','observations')
 --      and grantee in ('authenticated','anon')
 --    order by table_name, grantee, privilege_type;
@@ -1011,7 +1131,7 @@ alter default privileges in schema public revoke all on tables from anon;
 --   begin;
 --     set local role authenticated;
 --     set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000000","role":"authenticated"}';
---     update public.changes set rationale = 'tampered';
+--     update shift.changes set rationale = 'tampered';
 --   rollback;
 --
 -- ============================================================================
