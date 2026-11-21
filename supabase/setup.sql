@@ -1,13 +1,14 @@
 -- Shift — complete database setup.
 --
 -- GENERATED FILE. Do not edit; edit supabase/migrations/*.sql and run
--- `npm run sql`. Generated 2026-11-20 from:
+-- `npm run sql`. Generated 2026-11-21 from:
 --   supabase/migrations/0001_init.sql
 --   supabase/migrations/0002_behaviour.sql
 --   supabase/migrations/0003_outcome_map.sql
 --   supabase/migrations/0004_grants.sql
 --   supabase/migrations/0005_move_to_shift_schema.sql
 --   supabase/migrations/0006_profiles_for_other_mel_tools.sql
+--   supabase/migrations/0007_tighten_function_grants.sql
 --
 -- ============================================================================
 -- HOW TO USE
@@ -1135,6 +1136,41 @@ $function$;
 
 revoke all on function shift.ensure_profile() from public, anon;
 grant execute on function shift.ensure_profile() to authenticated;
+
+
+-- ==========================================================================
+-- 0007_tighten_function_grants.sql
+-- ==========================================================================
+
+-- Shift - close the function grants the Supabase security advisor flags.
+--
+-- Postgres lets everyone (PUBLIC) execute a new function unless told otherwise.
+-- 0001-0006 revoke that for the membership and invite functions, but not for:
+--
+--   * the three trigger functions (handle_new_user, changes_consistency,
+--     observations_consistency). They run only as triggers, and a trigger does
+--     not check EXECUTE when it fires, so nobody needs to call them directly.
+--   * peek_invite, which stays callable by signed-out visitors on purpose (an
+--     invite link usually arrives before the person has an account). It keeps
+--     its explicit grants to anon and authenticated; only the PUBLIC grant goes.
+--   * public.keepalive(), which also had no fixed search_path. It only returns
+--     now(), which lives in pg_catalog and is found with an empty search_path.
+--
+-- is_member() and is_admin() keep their grant to authenticated on purpose: the
+-- Row Level Security policies call them as the signed-in user.
+--
+-- Safe to run more than once. No table, row or policy changes.
+
+revoke all on function shift.handle_new_user() from public, anon, authenticated;
+revoke all on function shift.changes_consistency() from public, anon, authenticated;
+revoke all on function shift.observations_consistency() from public, anon, authenticated;
+
+revoke all on function shift.peek_invite(text) from public;
+grant execute on function shift.peek_invite(text) to anon, authenticated;
+
+alter function public.keepalive() set search_path = '';
+revoke all on function public.keepalive() from public;
+grant execute on function public.keepalive() to anon, authenticated;
 
 
 -- ============================================================================
