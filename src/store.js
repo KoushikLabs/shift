@@ -16,6 +16,7 @@ import {
   makeObservation,
   makeProject,
   makeStakeholder,
+  namedPeopleIn,
   newId,
   normalizeDepth,
   normalizeReach,
@@ -293,8 +294,19 @@ export async function addStakeholder(fields) {
 
 export async function addStakeholdersBulk(list) {
   if (!state.project) return { ok: false };
-  const made = list.map((f) => makeStakeholder(state.project.id, f)).filter((s) => s.name);
-  if (!made.length) return { ok: false, message: "Nothing to import — no rows had a name." };
+  const all = list.map((f) => makeStakeholder(state.project.id, f)).filter((s) => s.name);
+  if (!all.length) return { ok: false, message: "Nothing to import — no rows had a name." };
+  // Signed in, rows that look like named people are left out rather than
+  // sinking the whole paste. The flag on a pasted row is a guess from the name,
+  // so the message says how to add one that is really an organisation.
+  const leftOut = backendMode() === CLOUD ? namedPeopleIn(all).map((s) => s.name) : [];
+  const made = leftOut.length ? all.filter((s) => !s.isIndividual) : all;
+  if (!made.length) {
+    return {
+      ok: false,
+      message: `Nothing was imported: ${leftOut.length === 1 ? "the only row looks" : `all ${leftOut.length} rows look`} like named individuals, and signed-in maps take organisations and public roles. Add them one at a time under a role, or untick “named individual” there if the name is an organisation.`,
+    };
+  }
   try {
     await backend().addStakeholders(made, touchProject());
   } catch (e) {
@@ -304,7 +316,7 @@ export async function addStakeholdersBulk(list) {
   for (const s of made) state.changes.set(s.id, []);
   bumpProject();
   emit();
-  return { ok: true, count: made.length };
+  return { ok: true, count: made.length, leftOut };
 }
 
 /**

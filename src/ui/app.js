@@ -24,6 +24,7 @@ import {
   coverage,
   hasStrategy,
   looksLikeIndividual,
+  withoutNamedPeople,
   makeStakeholder,
   interestBand,
   normalizeDepth,
@@ -32,7 +33,7 @@ import {
   stanceLabel,
 } from "../domain.js";
 import { buildExampleProject } from "../example.js";
-import { backend } from "../backends/index.js";
+import { backend, backendMode } from "../backends/index.js";
 import { renderMatrix } from "./matrix.js";
 import { renderTiles, renderTable, boundaryPartnerWarning } from "./mapview.js";
 import { renderLadders, renderMarkers, reflectionDialog } from "./behaviour.js";
@@ -1068,7 +1069,10 @@ async function addStakeholderDialog() {
         key: "isIndividual",
         type: "checkbox",
         label: "This is a named individual, not an organisation",
-        hint: "Flags it for the data-protection obligations that attach to a written assessment of an identifiable person.",
+        hint:
+          backendMode() === CLOUD
+            ? "Signed-in maps take organisations and public roles, not named people, so this will not save while ticked. Use the role instead, for example “the regional officer”. Untick it if the name is an organisation."
+            : "Flags it for the data-protection obligations that attach to a written assessment of an identifiable person.",
       },
     ],
     onInput: (v, dlg) => {
@@ -1125,7 +1129,15 @@ async function identityDialog(d) {
             },
           ]
         : []),
-      { key: "isIndividual", type: "checkbox", label: "This is a named individual, not an organisation", value: d.isIndividual },
+      {
+        key: "isIndividual",
+        type: "checkbox",
+        label: "This is a named individual, not an organisation",
+        value: d.isIndividual,
+        ...(backendMode() === CLOUD
+          ? { hint: "Signed-in maps take organisations and public roles, not named people, so this will not save while ticked." }
+          : {}),
+      },
     ],
   });
   if (!v) return;
@@ -1158,7 +1170,14 @@ async function importCsv() {
   const records = await csvImportDialog();
   if (!records || !records.length) return;
   const res = await store.addStakeholdersBulk(records);
-  if (res.ok) store.notify(`Imported ${plural(res.count, "stakeholder")}.`, "good");
+  if (res.ok && res.leftOut && res.leftOut.length) {
+    store.notify(
+      `Imported ${plural(res.count, "stakeholder")}. Left out ${res.leftOut.map((n) => `“${n}”`).join(", ")}: ` +
+        `${res.leftOut.length === 1 ? "it looks like a named individual" : "they look like named individuals"}, and signed-in maps take organisations and public roles. ` +
+        `Add ${res.leftOut.length === 1 ? "it" : "them"} one at a time under a role, or untick “named individual” there if the name is an organisation.`,
+      "info"
+    );
+  } else if (res.ok) store.notify(`Imported ${plural(res.count, "stakeholder")}.`, "good");
   else if (res.message) store.notify(res.message, "error");
 }
 
@@ -1270,7 +1289,10 @@ function pickJsonText() {
 }
 
 async function loadExample() {
-  const payload = buildExampleProject();
+  // The example includes one invented named individual, to show the flag.
+  // Signed-in maps do not take named people, so that one stays out there.
+  const built = buildExampleProject();
+  const payload = backendMode() === CLOUD ? withoutNamedPeople(built) : built;
   try {
     await backend().importProject(payload);
   } catch (e) {

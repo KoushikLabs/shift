@@ -23,6 +23,7 @@
 
 import { explainError, supabase } from "../supabaseClient.js";
 import { session } from "../auth.js";
+import { namedPeopleIn, namedPeopleMessage } from "../domain.js";
 import {
   changeToRow,
   cycleToRow,
@@ -53,6 +54,16 @@ function orgId() {
 
 function fail(error, fallback) {
   throw new CloudError(explainError(error, fallback), error);
+}
+
+/**
+ * Refuse named individuals before anything is sent. commitChange writes the
+ * history row first, so letting the database be the one to say no would leave
+ * a history entry for a save that then failed.
+ */
+function refuseNamedPeople(list) {
+  const people = namedPeopleIn(list);
+  if (people.length) throw new CloudError(namedPeopleMessage(people));
 }
 
 /* --------------------------------------------------------------- projects */
@@ -134,6 +145,7 @@ export async function deleteProject(projectId) {
 /* ----------------------------------------------------------- stakeholders */
 
 export async function putStakeholder(stakeholder, projectTouch) {
+  refuseNamedPeople([stakeholder]);
   const { error } = await supabase().from("stakeholders").upsert(stakeholderToRow(stakeholder, orgId()));
   if (error) fail(error, "Could not save the stakeholder");
   if (projectTouch) await touch(projectTouch);
@@ -141,6 +153,7 @@ export async function putStakeholder(stakeholder, projectTouch) {
 }
 
 export async function addStakeholders(list, projectTouch) {
+  refuseNamedPeople(list);
   const org = orgId();
   const rows = list.map((s) => stakeholderToRow(s, org));
   const { error } = await supabase().from("stakeholders").insert(rows);
@@ -157,6 +170,7 @@ export async function deleteStakeholder(stakeholderId) {
 /* ------------------------------------------------------- the atomic commit */
 
 export async function commitChange(stakeholder, change, projectTouch) {
+  refuseNamedPeople([stakeholder]);
   const org = orgId();
   const db = supabase();
   const user = session.user || {};
@@ -192,6 +206,7 @@ async function touch(project) {
 /* ------------------------------------------------------------------ import */
 
 export async function importProject({ project, stakeholders, changes, markers = [], observations = [], cycles = [] }) {
+  refuseNamedPeople(stakeholders);
   const org = orgId();
   const db = supabase();
   const user = session.user || {};

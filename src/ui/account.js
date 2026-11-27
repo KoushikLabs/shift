@@ -457,6 +457,9 @@ export async function offerMigration(orgName, onImport) {
             <span><strong>${esc(p.name)}</strong>${p.description ? `<br><span class="fhint" style="font-style:normal">${esc(p.description)}</span>` : ""}</span></label>`
           )
           .join("")}
+        <div class="caveat" style="margin-top:14px">A map that includes named individuals cannot be copied:
+          signed-in maps take organisations and public roles. It stays in this browser, where you can keep using it
+          signed out.</div>
         <div class="caveat" style="margin-top:14px">Anything you copy becomes visible to everyone in
           ${esc(orgName)}. If a map holds assessments that should not be shared with colleagues, leave it
           unticked — it stays private to this browser.</div>
@@ -493,15 +496,16 @@ export async function offerMigration(orgName, onImport) {
           await onImport(payload);
           done++;
         } catch (e) {
-          failures.push(`${id}: ${e.message || "failed"}`);
+          failures.push(e.message || "failed");
         }
       }
 
       if (failures.length) {
         const err = dlg.querySelector("#migErr");
         err.hidden = false;
+        err.style.display = "block";
         err.innerHTML = `<strong>${failures.length} of ${ids.length} could not be copied.</strong>
-          Your browser copies are untouched — try again, or export them as JSON and import them manually.`;
+          Your browser copies are untouched.<br>${[...new Set(failures)].map(esc).join("<br>")}`;
         go.disabled = false;
         status.textContent = "";
         return;

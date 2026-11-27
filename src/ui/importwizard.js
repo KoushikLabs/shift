@@ -15,6 +15,7 @@ import { IMPORT_FIELDS, guessMapping, parseCsv, rowsToStakeholderFields } from "
 import { readFileBinary } from "../io/download.js";
 import { looksLikeOldXls, looksLikeXlsx, readWorkbook } from "../io/xlsx.js";
 import { stanceLabel, stanceOf } from "../domain.js";
+import { backendMode, CLOUD } from "../backends/index.js";
 import { customDialog } from "./modal.js";
 import { esc, signed, truncate } from "./dom.js";
 
@@ -304,7 +305,12 @@ export function csvImportDialog() {
         </tbody></table></div>
         ${records.length > 200 ? `<p class="note">Showing the first 200.</p>` : ""}
         ${
-          records.some((r) => r.isIndividual)
+          records.some((r) => r.isIndividual) && backendMode() === CLOUD
+            ? `<div class="caveat" style="margin-top:14px"><strong>Some of these look like named individuals and will be
+               left out.</strong> Signed-in maps take organisations and public roles, not named people. After the
+               import, add each one under its role, or by name with “named individual” unticked if it is in fact an
+               organisation.</div>`
+            : records.some((r) => r.isIndividual)
             ? `<div class="caveat" style="margin-top:14px"><strong>Some of these look like named individuals.</strong>
                A written adverse assessment of an identifiable person is personal data with real obligations attached,
                including their right of access. Consider mapping the role or the institution instead. They are flagged

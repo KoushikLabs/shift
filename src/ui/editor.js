@@ -40,6 +40,7 @@ import {
 import { esc, fmtDate, fmtDateTime, signed } from "./dom.js";
 import { DEPTH_OUTCOME, DEPTH_WATCH, outcomeChallengeWarnings, reachLabel } from "../domain.js";
 import { dyerChecksHtml, strategyMapHtml } from "./outcomemap.js";
+import { backendMode, CLOUD } from "../backends/index.js";
 import { renderMarkers } from "./behaviour.js";
 
 /**
@@ -244,7 +245,11 @@ export function renderEditor(host, ctx) {
     if (wp) {
       const flagged = d.isIndividual || looksLikeIndividual(d.name);
       wp.hidden = !flagged;
-      if (flagged) {
+      if (flagged && backendMode() === CLOUD) {
+        wp.innerHTML = d.isIndividual
+          ? "<strong>This is marked as a named individual, so changes to it will not save.</strong> Signed-in maps take organisations and public roles, not named people. Use <em>Rename</em> to change it to the role or the institution, for example “Regional Officer, Karnal”, and untick “named individual”. To keep mapping the person by name, download this map from the <em>Data</em> tab and continue in this browser only, signed out."
+          : "<strong>This looks like a named individual.</strong> Signed-in maps take organisations and public roles, not named people. If it is a person, use <em>Rename</em> to change it to the role or the institution, for example “Regional Officer, Karnal”.";
+      } else if (flagged) {
         wp.innerHTML =
           "<strong>This looks like a named individual.</strong> A written adverse assessment of an identifiable person is personal data under the UK/EU GDPR and comparable regimes, and they have a right of access to it. Prefer mapping the <em>role</em> or the <em>institution</em> where you can — “Regional Officer, Karnal” rather than a name.";
       }
