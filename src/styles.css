@@ -455,6 +455,8 @@ dialog::backdrop { background: var(--scrim); }
 footer { margin-top: 42px; border-top: 1px solid var(--rule); padding-top: 18px; color: var(--faint); font-size: 0.82rem; }
 footer p { max-width: 80ch; margin: 0 0 8px; }
 footer strong { color: var(--muted); }
+footer a { color: inherit; }
+footer.legal { margin-top: 0; border-top: 0; padding-top: 0; }
 
 /* --------------------------------------------------------------- utility */
 

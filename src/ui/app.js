@@ -129,6 +129,10 @@ function render() {
   paintBanner();
 }
 
+/** Shown in every footer. Relative links, so they work wherever the build is hosted. */
+const LEGAL_LINKS = `<a href="./privacy.html" target="_blank" rel="noopener">Privacy notice</a> ·
+  <a href="./agreement.html" target="_blank" rel="noopener">Participation agreement</a> (for signed-in organisations)`;
+
 function loadingShell() {
   return `<header class="app"><p class="eyebrow">${APP_NAME}</p><h1>Loading…</h1></header>`;
 }
@@ -166,7 +170,8 @@ function orgShell() {
     </div>
     <div class="banner" id="banner" hidden></div>
   </header>
-  <div id="orgBody"></div>`;
+  <div id="orgBody"></div>
+  <footer><p>${LEGAL_LINKS}</p></footer>`;
 }
 
 function renderNoOrg() {
@@ -202,7 +207,8 @@ function listShell() {
       All three are versioned together, so when someone shifts you can see what you were doing at the time.</p>
     <div class="banner" id="banner" hidden></div>
   </header>
-  <div id="listBody"></div>`;
+  <div id="listBody"></div>
+  <footer class="legal"><p>${LEGAL_LINKS}</p></footer>`;
 }
 
 function projectShell() {
@@ -268,6 +274,7 @@ function projectShell() {
       an approach was in force. It does not establish that the approach caused it. Treat it as the evidence that
       prompts the question, not the answer.</p>
     <p id="storageFootnote"></p>
+    <p>${LEGAL_LINKS}</p>
   </footer>`;
 }
 

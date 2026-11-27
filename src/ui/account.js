@@ -59,8 +59,10 @@ export function signInDialog(startOn = "signin") {
                          <a href="${esc(ACCESS_REQUEST_URL)}" target="_blank" rel="noopener">Ask for access</a>.</p>`
                     : ""
                 }<div class="caveat" style="margin-top:14px">By creating an account you are choosing to store your
-                   stakeholder assessments on the server rather than only in this browser. You can export
-                   everything at any time, and delete your organisation whenever you like.</div>`
+                   stakeholder assessments on the server rather than only in this browser. You can download
+                   everything at any time, and ask us to delete your organisation whenever you like. The
+                   <a href="./privacy.html" target="_blank" rel="noopener">privacy notice</a> says what is kept
+                   and who can see it.</div>`
           }
           <p class="warnline" id="a-error" hidden></p>
         </div>
