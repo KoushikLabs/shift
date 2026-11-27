@@ -24,6 +24,7 @@ import {
   coverage,
   hasStrategy,
   looksLikeIndividual,
+  withoutNamedPeople,
   makeStakeholder,
   interestBand,
   normalizeDepth,
@@ -32,7 +33,7 @@ import {
   stanceLabel,
 } from "../domain.js";
 import { buildExampleProject } from "../example.js";
-import { backend } from "../backends/index.js";
+import { backend, backendMode } from "../backends/index.js";
 import { renderMatrix } from "./matrix.js";
 import { renderTiles, renderTable, boundaryPartnerWarning } from "./mapview.js";
 import { renderLadders, renderMarkers, reflectionDialog } from "./behaviour.js";
@@ -64,6 +65,7 @@ import {
   handleInviteLink,
   membersDialog,
   noOrganisationScreen,
+  agreementScreen,
   offerMigration,
   signInDialog,
 } from "./account.js";
@@ -104,7 +106,9 @@ function render() {
       ? "loading"
       : needsOrg
         ? "noorg"
-        : state.project
+        : auth.needsAgreement()
+          ? "agreement:" + auth.session.orgId
+          : state.project
           ? "project:" + state.project.id
           : "list";
   if (key !== shellKey) {
@@ -115,7 +119,7 @@ function render() {
         ? fatalShell()
         : key === "loading"
           ? loadingShell()
-          : key === "noorg"
+          : key === "noorg" || key.startsWith("agreement:")
             ? orgShell()
             : key === "list"
               ? listShell()
@@ -124,10 +128,15 @@ function render() {
   }
   if (key === "list") renderList();
   else if (key === "noorg") renderNoOrg();
+  else if (key.startsWith("agreement:")) renderAgreement();
   else if (key.startsWith("project:")) renderProject();
   renderAccountBar();
   paintBanner();
 }
+
+/** Shown in every footer. Relative links, so they work wherever the build is hosted. */
+const LEGAL_LINKS = `<a href="./privacy.html" target="_blank" rel="noopener">Privacy notice</a> ·
+  <a href="./agreement.html" target="_blank" rel="noopener">Participation agreement</a> (for signed-in organisations)`;
 
 function loadingShell() {
   return `<header class="app"><p class="eyebrow">${APP_NAME}</p><h1>Loading…</h1></header>`;
@@ -166,7 +175,8 @@ function orgShell() {
     </div>
     <div class="banner" id="banner" hidden></div>
   </header>
-  <div id="orgBody"></div>`;
+  <div id="orgBody"></div>
+  <footer><p>${LEGAL_LINKS}</p></footer>`;
 }
 
 function renderNoOrg() {
@@ -181,6 +191,50 @@ function renderNoOrg() {
     }
   });
   host.querySelector("#signOutEmpty").addEventListener("click", doSignOut);
+}
+
+/** Drawn once per organisation, so a re-render does not clear the tick box. */
+let agreementDrawnFor = "";
+function renderAgreement() {
+  const host = root.querySelector("#orgBody");
+  const org = auth.activeOrg();
+  if (!host || !org) return;
+  const drawKey = org.id + ":" + org.role;
+  if (agreementDrawnFor === drawKey && host.firstChild) return;
+  agreementDrawnFor = drawKey;
+  host.innerHTML = agreementScreen(org.name, org.role === "admin");
+
+  const err = host.querySelector("#agreeErr");
+  const say = (msg) => {
+    err.hidden = false;
+    err.style.display = "block";
+    err.textContent = msg;
+  };
+  const done = async () => {
+    agreementDrawnFor = "";
+    await store.reconcileMode();
+    await maybeMigrate();
+  };
+  const go = host.querySelector("#agreeGo");
+  if (go)
+    go.addEventListener("click", async () => {
+      if (!host.querySelector("#agreeTick").checked) return say("Tick the box to accept the agreement.");
+      go.disabled = true;
+      const res = await auth.acceptAgreement(org.id);
+      go.disabled = false;
+      if (!res.ok) return say(res.message);
+      await done();
+    });
+  const check = host.querySelector("#agreeCheck");
+  if (check)
+    check.addEventListener("click", async () => {
+      check.disabled = true;
+      const accepted = await auth.recheckAgreement();
+      check.disabled = false;
+      if (!accepted) return say("Not accepted yet. Ask an admin at your organisation to sign in to Shift.");
+      await done();
+    });
+  host.querySelector("#agreeSignOut").addEventListener("click", doSignOut);
 }
 
 function listShell() {
@@ -202,7 +256,8 @@ function listShell() {
       All three are versioned together, so when someone shifts you can see what you were doing at the time.</p>
     <div class="banner" id="banner" hidden></div>
   </header>
-  <div id="listBody"></div>`;
+  <div id="listBody"></div>
+  <footer class="legal"><p>${LEGAL_LINKS}</p></footer>`;
 }
 
 function projectShell() {
@@ -268,6 +323,7 @@ function projectShell() {
       an approach was in force. It does not establish that the approach caused it. Treat it as the evidence that
       prompts the question, not the answer.</p>
     <p id="storageFootnote"></p>
+    <p>${LEGAL_LINKS}</p>
   </footer>`;
 }
 
@@ -396,6 +452,7 @@ async function maybeMigrate() {
   if (migrationOffered) return;
   const org = auth.activeOrg();
   if (!org) return;
+  if (auth.needsAgreement()) return; // offered again once the agreement is accepted
   migrationOffered = true;
   const res = await offerMigration(org.name, (payload) => backend().importProject(payload));
   if (res.moved > 0) {
@@ -1012,7 +1069,10 @@ async function addStakeholderDialog() {
         key: "isIndividual",
         type: "checkbox",
         label: "This is a named individual, not an organisation",
-        hint: "Flags it for the data-protection obligations that attach to a written assessment of an identifiable person.",
+        hint:
+          backendMode() === CLOUD
+            ? "Signed-in maps take organisations and public roles, not named people, so this will not save while ticked. Use the role instead, for example “the regional officer”. Untick it if the name is an organisation."
+            : "Flags it for the data-protection obligations that attach to a written assessment of an identifiable person.",
       },
     ],
     onInput: (v, dlg) => {
@@ -1069,7 +1129,15 @@ async function identityDialog(d) {
             },
           ]
         : []),
-      { key: "isIndividual", type: "checkbox", label: "This is a named individual, not an organisation", value: d.isIndividual },
+      {
+        key: "isIndividual",
+        type: "checkbox",
+        label: "This is a named individual, not an organisation",
+        value: d.isIndividual,
+        ...(backendMode() === CLOUD
+          ? { hint: "Signed-in maps take organisations and public roles, not named people, so this will not save while ticked." }
+          : {}),
+      },
     ],
   });
   if (!v) return;
@@ -1102,7 +1170,14 @@ async function importCsv() {
   const records = await csvImportDialog();
   if (!records || !records.length) return;
   const res = await store.addStakeholdersBulk(records);
-  if (res.ok) store.notify(`Imported ${plural(res.count, "stakeholder")}.`, "good");
+  if (res.ok && res.leftOut && res.leftOut.length) {
+    store.notify(
+      `Imported ${plural(res.count, "stakeholder")}. Left out ${res.leftOut.map((n) => `“${n}”`).join(", ")}: ` +
+        `${res.leftOut.length === 1 ? "it looks like a named individual" : "they look like named individuals"}, and signed-in maps take organisations and public roles. ` +
+        `Add ${res.leftOut.length === 1 ? "it" : "them"} one at a time under a role, or untick “named individual” there if the name is an organisation.`,
+      "info"
+    );
+  } else if (res.ok) store.notify(`Imported ${plural(res.count, "stakeholder")}.`, "good");
   else if (res.message) store.notify(res.message, "error");
 }
 
@@ -1214,7 +1289,10 @@ function pickJsonText() {
 }
 
 async function loadExample() {
-  const payload = buildExampleProject();
+  // The example includes one invented named individual, to show the flag.
+  // Signed-in maps do not take named people, so that one stays out there.
+  const built = buildExampleProject();
+  const payload = backendMode() === CLOUD ? withoutNamedPeople(built) : built;
   try {
     await backend().importProject(payload);
   } catch (e) {

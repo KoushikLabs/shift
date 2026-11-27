@@ -59,8 +59,10 @@ export function signInDialog(startOn = "signin") {
                          <a href="${esc(ACCESS_REQUEST_URL)}" target="_blank" rel="noopener">Ask for access</a>.</p>`
                     : ""
                 }<div class="caveat" style="margin-top:14px">By creating an account you are choosing to store your
-                   stakeholder assessments on the server rather than only in this browser. You can export
-                   everything at any time, and delete your organisation whenever you like.</div>`
+                   stakeholder assessments on the server rather than only in this browser. You can download
+                   everything at any time, and ask us to delete your organisation whenever you like. The
+                   <a href="./privacy.html" target="_blank" rel="noopener">privacy notice</a> says what is kept
+                   and who can see it.</div>`
           }
           <p class="warnline" id="a-error" hidden></p>
         </div>
@@ -171,6 +173,47 @@ export function noOrganisationScreen() {
       <button class="primary" id="createOrg" data-autofocus>Create an organisation</button>
       <button class="ghost" id="signOutEmpty">Sign out</button>
     </div>
+  </div>`;
+}
+
+/**
+ * Shown when the active organisation has not accepted the participation
+ * agreement. An admin accepts once for the organisation; everyone else waits.
+ * The database refuses saves until then, so this screen is the explanation
+ * rather than the lock.
+ */
+export function agreementScreen(orgName, isAdmin) {
+  const org = esc(orgName);
+  const read = `<p class="note"><a href="./agreement.html" target="_blank" rel="noopener">Read the participation
+    agreement</a> (opens in a new tab). The <a href="./privacy.html" target="_blank" rel="noopener">privacy notice</a>
+    says what is kept and who can see it.</p>`;
+  return `<div class="blank">
+    <h2>Participation agreement</h2>
+    ${
+      isAdmin
+        ? `<p class="note">Before anyone at ${org} saves maps on the server, an admin accepts the participation
+             agreement for the organisation. It sets out what The MEL Barn does with your organisation's records
+             and what your organisation agrees to. Maps already saved are still here, and nothing can be added
+             or changed until this is done.</p>
+           ${read}
+           <label class="ack"><input type="checkbox" id="agreeTick">
+             <span>I have read the participation agreement and accept it on behalf of ${org}.</span></label>
+           <p class="warnline" id="agreeErr" hidden></p>
+           <div class="actions" style="margin:14px 0 0">
+             <button class="primary" id="agreeGo">Accept and continue</button>
+             <button class="ghost" id="agreeSignOut">Sign out</button>
+           </div>
+           <p class="note" style="margin:14px 0 0">Shift keeps a record that you accepted, with your email address
+             and the date. To use Shift without the server, sign out: maps then stay in this browser.</p>`
+        : `<p class="note">An admin at ${org} needs to accept the participation agreement before maps can be
+             added or changed. Ask them to sign in to Shift. You can read the agreement in the meantime.</p>
+           ${read}
+           <p class="warnline" id="agreeErr" hidden></p>
+           <div class="actions" style="margin:14px 0 0">
+             <button class="primary" id="agreeCheck">Check again</button>
+             <button class="ghost" id="agreeSignOut">Sign out</button>
+           </div>`
+    }
   </div>`;
 }
 
@@ -414,6 +457,9 @@ export async function offerMigration(orgName, onImport) {
             <span><strong>${esc(p.name)}</strong>${p.description ? `<br><span class="fhint" style="font-style:normal">${esc(p.description)}</span>` : ""}</span></label>`
           )
           .join("")}
+        <div class="caveat" style="margin-top:14px">A map that includes named individuals cannot be copied:
+          signed-in maps take organisations and public roles. It stays in this browser, where you can keep using it
+          signed out.</div>
         <div class="caveat" style="margin-top:14px">Anything you copy becomes visible to everyone in
           ${esc(orgName)}. If a map holds assessments that should not be shared with colleagues, leave it
           unticked — it stays private to this browser.</div>
@@ -450,15 +496,16 @@ export async function offerMigration(orgName, onImport) {
           await onImport(payload);
           done++;
         } catch (e) {
-          failures.push(`${id}: ${e.message || "failed"}`);
+          failures.push(e.message || "failed");
         }
       }
 
       if (failures.length) {
         const err = dlg.querySelector("#migErr");
         err.hidden = false;
+        err.style.display = "block";
         err.innerHTML = `<strong>${failures.length} of ${ids.length} could not be copied.</strong>
-          Your browser copies are untouched — try again, or export them as JSON and import them manually.`;
+          Your browser copies are untouched.<br>${[...new Set(failures)].map(esc).join("<br>")}`;
         go.disabled = false;
         status.textContent = "";
         return;

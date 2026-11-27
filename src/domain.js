@@ -146,6 +146,54 @@ const ORG_KEYWORDS =
 
 const PERSON_TITLE = /^(mr|mrs|ms|miss|mx|dr|prof|professor|sir|dame|lord|lady|rev|hon|senator|rep|cllr|councillor)\.?\s+/i;
 
+/**
+ * Signed-in maps take organisations and public roles, not named people.
+ *
+ * A score for where an identifiable person stands on a political question is
+ * special category data, and the server copy is held by The MEL Barn as the
+ * organisation's processor. Bellwether's stakeholder map makes the same choice
+ * for the same reason. Browser-only maps are not affected: they never leave the
+ * machine. The database enforces this too (migration 0009).
+ *
+ * @returns the stakeholders in `list` flagged as named individuals.
+ */
+export function namedPeopleIn(list) {
+  return (list || []).filter((s) => s && s.isIndividual);
+}
+
+export function namedPeopleMessage(people) {
+  const names = people.map((s) => `“${s.name}”`);
+  const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+  const one = people.length === 1;
+  return (
+    `Signed-in maps take organisations and public roles, not named people. ${shown} ${one ? "is" : "are"} marked as ` +
+    `${one ? "a named individual" : "named individuals"}. Rename ${one ? "it" : "each"} to the role or the organisation, ` +
+    `for example “the regional officer”, and untick “named individual”. To map a named person, sign out and keep ` +
+    `that map in this browser only. Nothing was saved.`
+  );
+}
+
+/**
+ * A copy of an import payload without its named individuals, and without the
+ * history, behaviours and observations that belong to them. Used for the
+ * built-in example in signed-in mode, never for a user's own data: dropping
+ * someone's records without being asked is not this tool's call to make.
+ */
+export function withoutNamedPeople(payload) {
+  const gone = new Set(namedPeopleIn(payload.stakeholders).map((s) => s.id));
+  if (!gone.size) return payload;
+  const keep = (x) => !gone.has(x.stakeholderId);
+  return {
+    ...payload,
+    stakeholders: payload.stakeholders
+      .filter((s) => !gone.has(s.id))
+      .map((s) => (s.reachableVia ? { ...s, reachableVia: s.reachableVia.filter((id) => !gone.has(id)) } : s)),
+    changes: (payload.changes || []).filter(keep),
+    ...(payload.markers ? { markers: payload.markers.filter(keep) } : {}),
+    ...(payload.observations ? { observations: payload.observations.filter(keep) } : {}),
+  };
+}
+
 export function looksLikeIndividual(name) {
   const n = String(name == null ? "" : name).trim();
   if (!n) return false;

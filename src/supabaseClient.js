@@ -84,6 +84,9 @@ export function explainError(error, fallback = "Something went wrong.") {
   if (code === "42501" || msg.includes("row-level security")) {
     return "The database refused that change. Recorded history cannot be edited or deleted — a correction is a new entry.";
   }
+  if (msg.includes("stakeholders_no_named_people")) {
+    return "Signed-in maps take organisations and public roles, not named people. Rename it to the role or the organisation and untick “named individual”. Nothing was saved.";
+  }
   if (code === "23505") return "That already exists.";
   if (code === "23503") return "That refers to something which no longer exists. Reload and try again.";
   if (code === "PGRST301" || msg.includes("JWT")) return "Your session expired. Sign in again — nothing was saved.";
