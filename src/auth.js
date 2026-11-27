@@ -41,6 +41,20 @@ export function isAdminOfActiveOrg() {
   return Boolean(o && o.role === "admin");
 }
 
+/**
+ * The version of public/agreement.html in force. An organisation accepts it
+ * once, through an admin, before its members save to the server. Change it
+ * together with shift.agreement_version() in the database, and only when the
+ * agreement changes in a way organisations need to accept again.
+ */
+export const AGREEMENT_VERSION = "1";
+
+/** True only when the database says the active organisation has not accepted. */
+export function needsAgreement() {
+  const o = activeOrg();
+  return Boolean(o && o.agreed === false);
+}
+
 const LAST_ORG_KEY = "shift-last-org";
 
 /* --------------------------------------------------------------- lifecycle */
@@ -97,10 +111,21 @@ export async function refreshOrgs() {
     session.orgId = null;
     return;
   }
-  const { data, error } = await supabase()
+  let knowsAgreement = true;
+  let { data, error } = await supabase()
     .from("memberships")
-    .select("role, organisations ( id, name )")
+    .select("role, organisations ( id, name, agreement_version )")
     .order("created_at", { ascending: true });
+
+  // A database from before migration 0008 has no agreement column. Carry on
+  // without it rather than show an organisation's members an empty app.
+  if (error) {
+    knowsAgreement = false;
+    ({ data, error } = await supabase()
+      .from("memberships")
+      .select("role, organisations ( id, name )")
+      .order("created_at", { ascending: true }));
+  }
 
   if (error) {
     session.orgs = [];
@@ -108,7 +133,13 @@ export async function refreshOrgs() {
   }
   session.orgs = (data || [])
     .filter((r) => r.organisations)
-    .map((r) => ({ id: r.organisations.id, name: r.organisations.name, role: r.role }));
+    .map((r) => ({
+      id: r.organisations.id,
+      name: r.organisations.name,
+      role: r.role,
+      // true or false once the database can say; null when it cannot.
+      agreed: knowsAgreement ? r.organisations.agreement_version === AGREEMENT_VERSION : null,
+    }));
 
   let remembered = null;
   try {
@@ -217,6 +248,26 @@ export async function createOrganisation(name) {
   } catch (e) {
     return { ok: false, message: explainError(e) };
   }
+}
+
+/** An admin accepts the participation agreement for their organisation. */
+export async function acceptAgreement(orgId) {
+  try {
+    const { error } = await supabase().rpc("accept_agreement", { org: orgId, accepted_version: AGREEMENT_VERSION });
+    if (error) return { ok: false, message: explainError(error, "Could not record that.") };
+    await refreshOrgs();
+    emit();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: explainError(e) };
+  }
+}
+
+/** Ask the database again, for a member waiting on their admin. */
+export async function recheckAgreement() {
+  await refreshOrgs();
+  emit();
+  return !needsAgreement();
 }
 
 export async function renameOrganisation(id, name) {

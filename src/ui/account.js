@@ -176,6 +176,47 @@ export function noOrganisationScreen() {
   </div>`;
 }
 
+/**
+ * Shown when the active organisation has not accepted the participation
+ * agreement. An admin accepts once for the organisation; everyone else waits.
+ * The database refuses saves until then, so this screen is the explanation
+ * rather than the lock.
+ */
+export function agreementScreen(orgName, isAdmin) {
+  const org = esc(orgName);
+  const read = `<p class="note"><a href="./agreement.html" target="_blank" rel="noopener">Read the participation
+    agreement</a> (opens in a new tab). The <a href="./privacy.html" target="_blank" rel="noopener">privacy notice</a>
+    says what is kept and who can see it.</p>`;
+  return `<div class="blank">
+    <h2>Participation agreement</h2>
+    ${
+      isAdmin
+        ? `<p class="note">Before anyone at ${org} saves maps on the server, an admin accepts the participation
+             agreement for the organisation. It sets out what The MEL Barn does with your organisation's records
+             and what your organisation agrees to. Maps already saved are still here, and nothing can be added
+             or changed until this is done.</p>
+           ${read}
+           <label class="ack"><input type="checkbox" id="agreeTick">
+             <span>I have read the participation agreement and accept it on behalf of ${org}.</span></label>
+           <p class="warnline" id="agreeErr" hidden></p>
+           <div class="actions" style="margin:14px 0 0">
+             <button class="primary" id="agreeGo">Accept and continue</button>
+             <button class="ghost" id="agreeSignOut">Sign out</button>
+           </div>
+           <p class="note" style="margin:14px 0 0">Shift keeps a record that you accepted, with your email address
+             and the date. To use Shift without the server, sign out: maps then stay in this browser.</p>`
+        : `<p class="note">An admin at ${org} needs to accept the participation agreement before maps can be
+             added or changed. Ask them to sign in to Shift. You can read the agreement in the meantime.</p>
+           ${read}
+           <p class="warnline" id="agreeErr" hidden></p>
+           <div class="actions" style="margin:14px 0 0">
+             <button class="primary" id="agreeCheck">Check again</button>
+             <button class="ghost" id="agreeSignOut">Sign out</button>
+           </div>`
+    }
+  </div>`;
+}
+
 /* -------------------------------------------------- members and invites */
 
 export function membersDialog(orgId, orgName) {

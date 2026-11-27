@@ -64,6 +64,7 @@ import {
   handleInviteLink,
   membersDialog,
   noOrganisationScreen,
+  agreementScreen,
   offerMigration,
   signInDialog,
 } from "./account.js";
@@ -104,7 +105,9 @@ function render() {
       ? "loading"
       : needsOrg
         ? "noorg"
-        : state.project
+        : auth.needsAgreement()
+          ? "agreement:" + auth.session.orgId
+          : state.project
           ? "project:" + state.project.id
           : "list";
   if (key !== shellKey) {
@@ -115,7 +118,7 @@ function render() {
         ? fatalShell()
         : key === "loading"
           ? loadingShell()
-          : key === "noorg"
+          : key === "noorg" || key.startsWith("agreement:")
             ? orgShell()
             : key === "list"
               ? listShell()
@@ -124,6 +127,7 @@ function render() {
   }
   if (key === "list") renderList();
   else if (key === "noorg") renderNoOrg();
+  else if (key.startsWith("agreement:")) renderAgreement();
   else if (key.startsWith("project:")) renderProject();
   renderAccountBar();
   paintBanner();
@@ -186,6 +190,50 @@ function renderNoOrg() {
     }
   });
   host.querySelector("#signOutEmpty").addEventListener("click", doSignOut);
+}
+
+/** Drawn once per organisation, so a re-render does not clear the tick box. */
+let agreementDrawnFor = "";
+function renderAgreement() {
+  const host = root.querySelector("#orgBody");
+  const org = auth.activeOrg();
+  if (!host || !org) return;
+  const drawKey = org.id + ":" + org.role;
+  if (agreementDrawnFor === drawKey && host.firstChild) return;
+  agreementDrawnFor = drawKey;
+  host.innerHTML = agreementScreen(org.name, org.role === "admin");
+
+  const err = host.querySelector("#agreeErr");
+  const say = (msg) => {
+    err.hidden = false;
+    err.style.display = "block";
+    err.textContent = msg;
+  };
+  const done = async () => {
+    agreementDrawnFor = "";
+    await store.reconcileMode();
+    await maybeMigrate();
+  };
+  const go = host.querySelector("#agreeGo");
+  if (go)
+    go.addEventListener("click", async () => {
+      if (!host.querySelector("#agreeTick").checked) return say("Tick the box to accept the agreement.");
+      go.disabled = true;
+      const res = await auth.acceptAgreement(org.id);
+      go.disabled = false;
+      if (!res.ok) return say(res.message);
+      await done();
+    });
+  const check = host.querySelector("#agreeCheck");
+  if (check)
+    check.addEventListener("click", async () => {
+      check.disabled = true;
+      const accepted = await auth.recheckAgreement();
+      check.disabled = false;
+      if (!accepted) return say("Not accepted yet. Ask an admin at your organisation to sign in to Shift.");
+      await done();
+    });
+  host.querySelector("#agreeSignOut").addEventListener("click", doSignOut);
 }
 
 function listShell() {
@@ -403,6 +451,7 @@ async function maybeMigrate() {
   if (migrationOffered) return;
   const org = auth.activeOrg();
   if (!org) return;
+  if (auth.needsAgreement()) return; // offered again once the agreement is accepted
   migrationOffered = true;
   const res = await offerMigration(org.name, (payload) => backend().importProject(payload));
   if (res.moved > 0) {
